@@ -42,16 +42,23 @@ const MOCK_REPORTS = [
 ];
 
 export default function ReportsPage() {
-  const { projects } = useWorkspace();
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string>("");
+  const { projects, activeProjectId, setActiveProjectId } = useWorkspace();
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string>(activeProjectId || "");
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [genSuccess, setGenSuccess] = React.useState(false);
 
   React.useEffect(() => {
-    if (projects.length > 0 && !selectedProjectId) {
+    if (activeProjectId) {
+      setSelectedProjectId(activeProjectId);
+    } else if (projects.length > 0 && !selectedProjectId) {
       setSelectedProjectId(projects[0].id);
     }
-  }, [projects]);
+  }, [activeProjectId, projects]);
+
+  const handleProjectChange = (val: string) => {
+    setSelectedProjectId(val);
+    setActiveProjectId(val || null);
+  };
 
   const handleGenerateReport = async () => {
     if (!selectedProjectId) return;
@@ -97,7 +104,7 @@ export default function ReportsPage() {
                 <label className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">Select Project Context</label>
                 <select
                   value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
+                  onChange={(e) => handleProjectChange(e.target.value)}
                   className="w-full pl-3 pr-8 h-10 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 focus:outline-none cursor-pointer"
                 >
                   {projects.length === 0 && <option value="">No Active Projects</option>}

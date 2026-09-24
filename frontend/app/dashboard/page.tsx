@@ -40,7 +40,7 @@ const itemVariants: Variants = {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, organization, projects, isLoading: ctxLoading, refreshProjects } = useWorkspace();
+  const { user, organization, projects, activeProjectId, setActiveProjectId, isLoading: ctxLoading, refreshProjects } = useWorkspace();
   
   const [isLoadingSubData, setIsLoadingSubData] = React.useState(true);
   const [isCreating, setIsCreating] = React.useState(false);
@@ -68,7 +68,7 @@ export default function DashboardPage() {
 
     setIsLoadingSubData(true);
     const supabase = createClient() as any;
-    const activeProjectId = projects[0].id;
+    const activeId = activeProjectId || projects[0].id;
 
     // Fetch metrics/counts from actual tables
     const { count: teamCount } = await supabase
@@ -79,18 +79,18 @@ export default function DashboardPage() {
     const { count: reqCount } = await supabase
       .from("requirements")
       .select("*", { count: "exact", head: true })
-      .eq("project_id", activeProjectId);
+      .eq("project_id", activeId);
 
     const { count: taskCount } = await supabase
       .from("tasks")
       .select("*", { count: "exact", head: true })
-      .eq("project_id", activeProjectId);
+      .eq("project_id", activeId);
 
     // Fetch real AI insights
     const { data: insightsData } = await supabase
       .from("ai_insights")
       .select("severity, title, description, metric_label, action_label")
-      .eq("project_id", activeProjectId)
+      .eq("project_id", activeId)
       .limit(4);
 
     if (insightsData) {
@@ -100,7 +100,7 @@ export default function DashboardPage() {
         description: row.description,
         metric: row.metric_label || undefined,
         action: row.action_label || undefined,
-        project: projects[0].name,
+        project: projects.find((p) => p.id === activeId)?.name || "Project",
       }));
       setInsights(formattedInsights);
     } else {
@@ -119,7 +119,7 @@ export default function DashboardPage() {
 
   React.useEffect(() => {
     loadSubData();
-  }, [projects, ctxLoading]);
+  }, [projects, ctxLoading, activeProjectId]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,13 +203,28 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => router.push("/dashboard/projects/new")}
-          className="hidden sm:flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-3 py-2 rounded-xl transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Project
-        </button>
+        <div className="flex items-center gap-3">
+          {projects.length > 0 && (
+            <div className="relative flex items-center">
+              <select
+                value={activeProjectId || ""}
+                onChange={(e) => setActiveProjectId(e.target.value || null)}
+                className="pl-3 pr-8 h-9 bg-white border border-zinc-200 rounded-xl text-xs font-bold text-zinc-750 focus:outline-none appearance-none cursor-pointer shadow-sm hover:bg-zinc-50 transition-colors"
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>📁 {p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button
+            onClick={() => router.push("/dashboard/projects/new")}
+            className="hidden sm:flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-3 py-2 rounded-xl transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Project
+          </button>
+        </div>
       </motion.div>
 
       {projects.length > 0 ? (
@@ -219,6 +234,47 @@ export default function DashboardPage() {
           animate="show"
           className="space-y-7"
         >
+          {/* ── Orion Interactive Setup Wizard ── */}
+          <motion.div
+            variants={itemVariants}
+            className="bg-gradient-to-r from-zinc-900 to-indigo-950 rounded-2xl p-6 border border-zinc-800 text-white shadow-xl space-y-4"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4.5 w-4.5 text-indigo-400 animate-pulse" />
+              <h2 className="text-xs font-black uppercase tracking-widest text-indigo-300">Workspace Setup Roadmap</h2>
+            </div>
+            
+            <p className="text-xs font-semibold text-zinc-350 leading-relaxed max-w-2xl">
+              Follow these steps to analyze requirement materials (e.g. your <code className="font-mono text-[10px] bg-zinc-800 px-1 py-0.5 rounded text-indigo-300">test.txt</code> transcript file) and automatically generate sprint schedules, milestones, and risk matrices.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+              <div className="p-4 bg-zinc-800/40 border border-zinc-800 rounded-xl space-y-2 relative">
+                <span className="text-xl font-black text-zinc-700 absolute top-2 right-3">1</span>
+                <h3 className="text-xs font-bold text-white">Ingest Specifications</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold leading-relaxed">
+                  Click on your project in the grid below, navigate to the <span className="text-indigo-400 font-bold">"Specs & Documents"</span> tab, and drag & drop or paste your transcript specs.
+                </p>
+              </div>
+
+              <div className="p-4 bg-zinc-800/40 border border-zinc-800 rounded-xl space-y-2 relative">
+                <span className="text-xl font-black text-zinc-700 absolute top-2 right-3">2</span>
+                <h3 className="text-xs font-bold text-white">Analyze Workspace</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold leading-relaxed">
+                  Click the <span className="text-indigo-400 font-bold">"Analyze Requirements"</span> button. Orion's LLM Agent will scan for modules and timeline matrices.
+                </p>
+              </div>
+
+              <div className="p-4 bg-zinc-800/40 border border-zinc-800 rounded-xl space-y-2 relative">
+                <span className="text-xl font-black text-zinc-700 absolute top-2 right-3">3</span>
+                <h3 className="text-xs font-bold text-white">Explore Timelines</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold leading-relaxed">
+                  Toggle the tabs to explore generated sprint backlogs, threat levels, or export master intelligence reports.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+
           {/* ── Stat Cards ── */}
           <motion.div variants={itemVariants} className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard

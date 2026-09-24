@@ -17,10 +17,21 @@ interface SourceFile {
 
 export default function AnalysisPage() {
   const router = useRouter();
-  const { projects } = useWorkspace();
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string>("");
+  const { projects, activeProjectId, setActiveProjectId } = useWorkspace();
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string>(activeProjectId || "");
   const [sources, setSources] = React.useState<SourceFile[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (activeProjectId) {
+      setSelectedProjectId(activeProjectId);
+    }
+  }, [activeProjectId]);
+
+  const handleProjectChange = (val: string) => {
+    setSelectedProjectId(val);
+    setActiveProjectId(val || null);
+  };
   
   // File Paste inputs
   const [sourceTitle, setSourceTitle] = React.useState("");
@@ -140,7 +151,7 @@ export default function AnalysisPage() {
             <label className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">Select Project Context</label>
             <select
               value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
+              onChange={(e) => handleProjectChange(e.target.value)}
               className="w-full pl-3 pr-8 h-10 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 focus:outline-none appearance-none cursor-pointer"
             >
               {projects.length === 0 && <option value="">No Active Projects</option>}

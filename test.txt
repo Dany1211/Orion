@@ -1,0 +1,207 @@
+Transcript
+
+Rahul (Client):
+
+Good morning everyone. We want to build a modern food delivery platform that connects customers, restaurants, and delivery partners. Initially we'll launch in Pune, but within a year we want to expand to multiple cities.
+
+Sarah (BA):
+
+Who are the primary users of the application?
+
+Rahul:
+
+There will be four major user roles.
+
+Customers who order food.
+
+Restaurant owners who manage menus.
+
+Delivery partners.
+
+Platform administrators.
+
+Dnyanesh:
+
+Can customers register using social login?
+
+Rahul:
+
+Yes.
+
+Google login should be supported.
+
+Mobile OTP login would also be useful later.
+
+For now email and Google are enough.
+
+Sarah:
+
+How should ordering work?
+
+Rahul:
+
+Users should search restaurants, browse menus, customize food items, add items to cart and place an order.
+
+They should be able to apply coupons and pay online.
+
+Cash on Delivery should also be supported.
+
+Omkar:
+
+How will restaurants manage their data?
+
+Rahul:
+
+Restaurant owners should have a dashboard.
+
+They should add or remove menu items.
+
+Update pricing.
+
+Mark dishes unavailable.
+
+View incoming orders.
+
+Accept or reject orders.
+
+Sarah:
+
+What happens after an order is accepted?
+
+Rahul:
+
+The system should automatically assign a nearby delivery partner.
+
+The delivery partner should receive a notification.
+
+Customers should be able to track delivery live.
+
+Dnyanesh:
+
+Should location updates happen in real time?
+
+Rahul:
+
+Yes.
+
+Tracking should refresh every few seconds.
+
+Sarah:
+
+Do you have any security requirements?
+
+Rahul:
+
+Definitely.
+
+Passwords should never be stored in plain text.
+
+Every user should have role-based permissions.
+
+Payment information should remain secure.
+
+Only admins should access analytics.
+
+Omkar:
+
+Any performance expectations?
+
+Rahul:
+
+The application should support at least 10,000 concurrent users during festivals.
+
+Search results should appear almost instantly.
+
+Page loading should not exceed three seconds under normal conditions.
+
+Sarah:
+
+Would you like notifications?
+
+Rahul:
+
+Yes.
+
+Order confirmation.
+
+Restaurant acceptance.
+
+Delivery assignment.
+
+Delivery status updates.
+
+Order delivered.
+
+Promotional notifications later.
+
+Dnyanesh:
+
+Any reports?
+
+Rahul:
+
+Restaurant owners should view daily sales.
+
+Admins need revenue dashboards.
+
+Monthly reports should be downloadable.
+
+Sarah:
+
+Anything else?
+
+Rahul:
+
+Ratings and reviews are important.
+
+Customers should rate restaurants and delivery partners.
+
+Restaurants should respond to reviews.
+
+Omkar:
+
+Any future features?
+
+Rahul:
+
+AI recommendations based on previous orders.
+
+Voice search.
+
+Subscription plans.
+
+Loyalty points.
+
+Dark mode.
+
+Sarah:
+
+Any constraints?
+
+Rahul:
+
+Budget is limited.
+
+We want the MVP in three months.
+
+The system should be cloud-based.
+
+Prefer open-source technologies where possible.
+
+Dnyanesh:
+
+Any integrations?
+
+Rahul:
+
+Google Maps.
+
+Payment Gateway.
+
+SMS service.
+
+Email service.
+
+Push notifications.
+
+Meeting Ends

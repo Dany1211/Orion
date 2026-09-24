@@ -8,6 +8,8 @@ interface WorkspaceContextType {
   user: any | null;
   organization: { id: string; name: string; slug: string; plan: string } | null;
   projects: any[];
+  activeProjectId: string | null;
+  setActiveProjectId: (id: string | null) => void;
   isLoading: boolean;
   refreshProjects: () => Promise<void>;
   refreshOrganization: () => Promise<void>;
@@ -20,6 +22,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<any | null>(null);
   const [organization, setOrganization] = React.useState<any | null>(null);
   const [projects, setProjects] = React.useState<any[]>([]);
+  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
 
   const fetchSessionAndProfile = async () => {
@@ -74,7 +77,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (projectsError) {
       console.error("Error fetching projects:", projectsError);
     } else {
-      setProjects(projectsData || []);
+      const fetchedProjects = projectsData || [];
+      setProjects(fetchedProjects);
+      if (fetchedProjects.length > 0) {
+        setActiveProjectId(fetchedProjects[0].id);
+      }
     }
 
     setIsLoading(false);
@@ -88,7 +95,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       .select("*")
       .eq("organization_id", organization.id)
       .order("updated_at", { ascending: false });
-    setProjects(projectsData || []);
+    const fetchedProjects = projectsData || [];
+    setProjects(fetchedProjects);
+    if (fetchedProjects.length > 0) {
+      setActiveProjectId((prev) => {
+        if (prev && fetchedProjects.some((p: any) => p.id === prev)) return prev;
+        return fetchedProjects[0].id;
+      });
+    }
   };
 
   const refreshOrganization = async () => {
@@ -120,6 +134,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         user,
         organization,
         projects,
+        activeProjectId,
+        setActiveProjectId,
         isLoading,
         refreshProjects,
         refreshOrganization,

@@ -75,14 +75,25 @@ const MOCK_REQUIREMENTS = [
 ];
 
 export default function RequirementsPage() {
-  const { projects } = useWorkspace();
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string>("all");
+  const { projects, activeProjectId, setActiveProjectId } = useWorkspace();
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string>(activeProjectId || "all");
   const [reqType, setReqType] = React.useState("all");
   const [priorityFilter, setPriorityFilter] = React.useState("all");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedReq, setSelectedReq] = React.useState<any>(null);
   const [dbRequirements, setDbRequirements] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (activeProjectId) {
+      setSelectedProjectId(activeProjectId);
+    }
+  }, [activeProjectId]);
+
+  const handleProjectChange = (val: string) => {
+    setSelectedProjectId(val);
+    setActiveProjectId(val === "all" ? null : val);
+  };
 
   const fetchRequirements = async () => {
     if (selectedProjectId === "all") {
@@ -142,7 +153,7 @@ export default function RequirementsPage() {
         <div className="relative">
           <select
             value={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
+            onChange={(e) => handleProjectChange(e.target.value)}
             className="w-full pl-3 pr-8 h-9 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-700 focus:outline-none appearance-none cursor-pointer"
           >
             <option value="all">📁 All Project Templates</option>
