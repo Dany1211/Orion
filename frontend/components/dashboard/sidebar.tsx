@@ -22,24 +22,24 @@ import {
 
 import { useWorkspace } from "@/lib/contexts/workspace-context";
 
-const navItems = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, badge: 4 },
-  { label: "Requirements", href: "/dashboard/requirements", icon: FileSearch },
-  { label: "AI Analysis", href: "/dashboard/analysis", icon: BrainCircuit, badge: 2, badgeColor: "bg-indigo-100 text-indigo-700" },
-  { label: "Reports", href: "/dashboard/reports", icon: BarChart3 },
-];
-
-const secondaryNav = [
-  { label: "Team", href: "/dashboard/team", icon: Users },
-  { label: "Settings", href: "/dashboard/settings", icon: Settings },
-  { label: "Help & Docs", href: "/dashboard/help", icon: HelpCircle },
-];
-
 export function Sidebar() {
   const pathname = usePathname();
   const [projectsOpen, setProjectsOpen] = React.useState(true);
   const { user, organization, projects, isLoading } = useWorkspace();
+
+  const navItems = [
+    { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, badge: projects.length || null },
+    { label: "Requirements", href: "/dashboard/requirements", icon: FileSearch },
+    { label: "AI Analysis", href: "/dashboard/analysis", icon: BrainCircuit, badgeColor: "bg-indigo-100 text-indigo-700" },
+    { label: "Reports", href: "/dashboard/reports", icon: BarChart3 },
+  ];
+
+  const secondaryNav = [
+    { label: "Team", href: "/dashboard/team", icon: Users },
+    { label: "Settings", href: "/dashboard/settings", icon: Settings },
+    { label: "Help & Docs", href: "/dashboard/help", icon: HelpCircle },
+  ];
 
   return (
     <aside className="flex flex-col h-full w-full bg-white border-r border-zinc-100">
@@ -166,10 +166,10 @@ export function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-bold text-zinc-800 leading-none truncate">
-              {user?.user_metadata?.full_name || user?.email?.split("@")[0] || "John Doe"}
+              {user?.user_metadata?.full_name || user?.email?.split("@")[0] || "User"}
             </p>
             <p className="text-[10px] font-medium text-zinc-400 mt-0.5 truncate">
-              {user?.email || "john@acme.com"}
+              {user?.email || ""}
             </p>
           </div>
           <Link href="/login" className="opacity-0 group-hover:opacity-100 transition-opacity">

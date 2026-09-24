@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Search, Bell, Sparkles, Command } from "lucide-react";
+import { Search, Bell, Sparkles } from "lucide-react";
+import { useWorkspace } from "@/lib/contexts/workspace-context";
 
 interface TopBarProps {
   title?: string;
@@ -9,6 +10,13 @@ interface TopBarProps {
 }
 
 export function TopBar({ title, subtitle }: TopBarProps) {
+  const { user } = useWorkspace();
+  const initials = user?.email
+    ? user.user_metadata?.full_name
+      ? user.user_metadata.full_name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
+      : user.email.slice(0, 2).toUpperCase()
+    : "??";
+
   return (
     <header className="h-14 bg-white border-b border-zinc-100 flex items-center px-6 gap-4 flex-shrink-0">
       {/* Title area */}
@@ -19,7 +27,6 @@ export function TopBar({ title, subtitle }: TopBarProps) {
             {subtitle && <p className="text-xs text-zinc-400 font-medium mt-0.5">{subtitle}</p>}
           </div>
         ) : (
-          /* Search bar */
           <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
             <input
@@ -46,9 +53,9 @@ export function TopBar({ title, subtitle }: TopBarProps) {
         <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-indigo-600" />
       </button>
 
-      {/* Avatar */}
+      {/* Avatar — real user initials */}
       <button className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-[10px] font-black flex-shrink-0 hover:ring-2 hover:ring-indigo-300 hover:ring-offset-1 transition-all">
-        JD
+        {initials}
       </button>
     </header>
   );

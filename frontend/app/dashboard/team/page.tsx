@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, UserPlus, Mail, Shield, ShieldCheck, X, Loader2, CheckCircle2, History } from "lucide-react";
+import { Users, UserPlus, Shield, X, Loader2, CheckCircle2, History, UserX } from "lucide-react";
 import { useWorkspace } from "@/lib/contexts/workspace-context";
 import { createClient } from "@/lib/supabase/client";
 
@@ -17,39 +17,6 @@ interface TeamMember {
   };
 }
 
-const MOCK_MEMBERS = [
-  {
-    user_id: "m-1",
-    role: "owner",
-    joined_at: "2026-08-21T09:12:37Z",
-    profile: {
-      email: "john@acme.com",
-      full_name: "John Doe",
-      avatar_url: null,
-    }
-  },
-  {
-    user_id: "m-2",
-    role: "admin",
-    joined_at: "2026-08-21T10:14:22Z",
-    profile: {
-      email: "sarah@acme.com",
-      full_name: "Sarah Jenkins",
-      avatar_url: null,
-    }
-  },
-  {
-    user_id: "m-3",
-    role: "member",
-    joined_at: "2026-08-21T11:42:00Z",
-    profile: {
-      email: "dave@acme.com",
-      full_name: "David K.",
-      avatar_url: null,
-    }
-  }
-];
-
 export default function TeamPage() {
   const { organization } = useWorkspace();
   const [members, setMembers] = React.useState<TeamMember[]>([]);
@@ -59,13 +26,13 @@ export default function TeamPage() {
   const [inviteRole, setInviteRole] = React.useState("member");
   const [inviteSuccess, setInviteSuccess] = React.useState(false);
   const [isInviting, setIsInviting] = React.useState(false);
+  const [activityLog, setActivityLog] = React.useState<any[]>([]);
 
   const fetchMembers = async () => {
     if (!organization?.id) return;
     setLoading(true);
     const supabase = createClient() as any;
-    
-    // Join organization_members with profiles
+
     const { data, error } = await supabase
       .from("organization_members")
       .select(`
@@ -78,7 +45,8 @@ export default function TeamPage() {
           avatar_url
         )
       `)
-      .eq("organization_id", organization.id);
+      .eq("organization_id", organization.id)
+      .order("joined_at", { ascending: true });
 
     if (!error && data) {
       setMembers(data as any);
@@ -97,7 +65,7 @@ export default function TeamPage() {
     setIsInviting(true);
     setInviteSuccess(false);
 
-    // Simulate sending invitation email
+    // Simulate sending invitation email (real invite would use Supabase Auth Admin API or custom edge function)
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
     setIsInviting(false);
@@ -108,21 +76,17 @@ export default function TeamPage() {
 
   const getRoleBadge = (role: string) => {
     switch (role) {
-      case "owner": return "bg-red-50 text-red-700 border-red-200";
-      case "admin": return "bg-indigo-50 text-indigo-700 border-indigo-200";
+      case "owner":  return "bg-red-50 text-red-700 border-red-200";
+      case "admin":  return "bg-indigo-50 text-indigo-700 border-indigo-200";
       case "member": return "bg-emerald-50 text-emerald-700 border-emerald-200";
-      default: return "bg-zinc-100 text-zinc-650 border-zinc-200";
+      default:       return "bg-zinc-100 text-zinc-600 border-zinc-200";
     }
   };
 
-  const getRoleIcon = (role: string) => {
-    if (role === "owner" || role === "admin") {
-      return <Shield className="h-4 w-4 text-indigo-500" />;
-    }
-    return <Users className="h-4 w-4 text-zinc-400" />;
+  const formatDate = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
-
-  const displayMembers = members.length > 0 ? members : MOCK_MEMBERS;
 
   return (
     <div className="min-h-full bg-zinc-50/60 px-5 sm:px-8 py-7 space-y-6">
@@ -131,7 +95,7 @@ export default function TeamPage() {
         <div>
           <h1 className="text-xl font-black text-zinc-900 tracking-tight">Team Members</h1>
           <p className="text-xs font-medium text-zinc-500 mt-1">
-            Manage your workspace membership, roles, permissions, and audit logs.
+            Manage your workspace membership, roles, and permissions.
           </p>
         </div>
         <button
@@ -144,20 +108,28 @@ export default function TeamPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Members list */}
+        {/* Members List */}
         <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-xs font-black text-zinc-900 uppercase tracking-wide">Active Members</h3>
-            <span className="text-[10px] font-bold text-zinc-400 bg-zinc-150 px-2 py-0.5 rounded-full">{displayMembers.length} active</span>
+            <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full">
+              {members.length} active
+            </span>
           </div>
 
           {loading ? (
-            <div className="flex justify-center py-12 bg-white rounded-2xl border border-zinc-150 shadow-sm">
+            <div className="flex justify-center py-12 bg-white rounded-2xl border border-zinc-100 shadow-sm">
               <Loader2 className="h-6 w-6 text-indigo-600 animate-spin" />
             </div>
+          ) : members.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-zinc-100 p-10 text-center shadow-sm">
+              <UserX className="h-8 w-8 text-zinc-300 mx-auto mb-3" />
+              <p className="text-sm font-bold text-zinc-600">No members found</p>
+              <p className="text-xs text-zinc-400 mt-1">Invite your team using the button above.</p>
+            </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-zinc-150 shadow-sm divide-y divide-zinc-100 overflow-hidden">
-              {displayMembers.map((member) => (
+            <div className="bg-white rounded-2xl border border-zinc-100 shadow-sm divide-y divide-zinc-50 overflow-hidden">
+              {members.map((member) => (
                 <div key={member.user_id} className="p-4 flex items-center justify-between gap-4 hover:bg-zinc-50/50 transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="h-9 w-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-xs font-black flex-shrink-0">
@@ -167,12 +139,17 @@ export default function TeamPage() {
                       <p className="text-xs font-bold text-zinc-800 leading-none truncate">
                         {member.profile.full_name || member.profile.email.split("@")[0]}
                       </p>
-                      <p className="text-[10px] font-semibold text-zinc-450 mt-1 truncate">{member.profile.email}</p>
+                      <p className="text-[10px] font-semibold text-zinc-400 mt-1 truncate">{member.profile.email}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {getRoleIcon(member.role)}
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="text-[9px] font-bold text-zinc-400 hidden sm:block">
+                      Joined {formatDate(member.joined_at)}
+                    </span>
+                    {(member.role === "owner" || member.role === "admin") && (
+                      <Shield className="h-4 w-4 text-indigo-400" />
+                    )}
                     <span className={`text-[9px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full border ${getRoleBadge(member.role)}`}>
                       {member.role}
                     </span>
@@ -183,27 +160,34 @@ export default function TeamPage() {
           )}
         </div>
 
-        {/* Right Column: Activity Logs */}
+        {/* Org Info Panel */}
         <div className="space-y-4">
           <div className="flex items-center gap-1.5 px-1">
             <History className="h-4 w-4 text-zinc-400" />
-            <h3 className="text-xs font-black text-zinc-900 uppercase tracking-wide">Workspace Activity</h3>
+            <h3 className="text-xs font-black text-zinc-900 uppercase tracking-wide">Workspace Info</h3>
           </div>
 
-          <div className="bg-white rounded-2xl border border-zinc-150 p-5 shadow-sm space-y-4">
-            {[
-              { text: "John Doe invited Sarah Jenkins", time: "2 hours ago" },
-              { text: "David K. updated HRMS description", time: "5 hours ago" },
-              { text: "Workspace plan upgraded to Free Tier", time: "1 day ago" },
-            ].map((activity, idx) => (
-              <div key={idx} className="flex items-start gap-3 text-xs leading-normal">
-                <div className="h-2 w-2 rounded-full bg-indigo-500 mt-1.5 flex-shrink-0" />
-                <div>
-                  <p className="font-semibold text-zinc-850">{activity.text}</p>
-                  <p className="text-[10px] font-bold text-zinc-400 mt-0.5">{activity.time}</p>
-                </div>
+          <div className="bg-white rounded-2xl border border-zinc-100 p-5 shadow-sm space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-500">Organization</span>
+                <span className="font-black text-zinc-800">{organization?.name || "—"}</span>
               </div>
-            ))}
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-500">Plan</span>
+                <span className="font-black text-indigo-600 capitalize">{organization?.plan || "free"}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-500">Total Members</span>
+                <span className="font-black text-zinc-800">{members.length}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-500">Admins</span>
+                <span className="font-black text-zinc-800">
+                  {members.filter(m => m.role === "owner" || m.role === "admin").length}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -222,7 +206,7 @@ export default function TeamPage() {
               <div>
                 <p className="text-xs font-black">Invitation Sent</p>
                 <p className="text-[10px] text-zinc-400 font-semibold mt-1 leading-relaxed">
-                  An email invite with workspace verification links has been sent out successfully.
+                  An email invite has been queued for delivery.
                 </p>
                 <button
                   onClick={() => setInviteSuccess(false)}
@@ -301,12 +285,8 @@ export default function TeamPage() {
                     className="h-9 px-4 rounded-xl bg-indigo-600 text-xs font-bold text-white shadow-md hover:bg-indigo-700 flex items-center justify-center gap-1.5"
                   >
                     {isInviting ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Inviting…
-                      </>
-                    ) : (
-                      "Send Invitation"
-                    )}
+                      <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Inviting…</>
+                    ) : "Send Invitation"}
                   </button>
                 </div>
               </form>

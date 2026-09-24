@@ -6,77 +6,9 @@ import { FileSearch, Sparkles, Filter, Search, ChevronRight, X, ShieldAlert, Cpu
 import { useWorkspace } from "@/lib/contexts/workspace-context";
 import { createClient } from "@/lib/supabase/client";
 
-// Mock template requirements to display if user has no requirements yet
-const MOCK_REQUIREMENTS = [
-  {
-    id: "req-1",
-    title: "Biometric Authentication Login",
-    description: "The mobile banking application must allow users to securely authenticate and sign in using iOS FaceID or Android fingerprint scan.",
-    req_type: "functional",
-    priority: "critical",
-    status: "confirmed",
-    complexity: "medium",
-    estimated_effort_hours: 12,
-    category: "Security",
-    acceptance_criteria: [
-      "User can enable biometric login from Account Settings.",
-      "FaceID / TouchID biometric scanner prompt is triggered on app launch.",
-      "System falls back to 6-digit backup PIN if biometrics fail 3 times."
-    ]
-  },
-  {
-    id: "req-2",
-    title: "Real-time Inventory Sync",
-    description: "Multi-vendor inventory quantities must synchronize automatically in real-time when checkout events occur, preventing double-selling.",
-    req_type: "functional",
-    priority: "high",
-    status: "confirmed",
-    complexity: "complex",
-    estimated_effort_hours: 24,
-    category: "Inventory",
-    acceptance_criteria: [
-      "Inventory database updates within 200ms of transaction confirmation.",
-      "Vendors receive immediate push notification on stock thresholds < 5.",
-      "Out-of-stock items dynamically render checkout disable flags."
-    ]
-  },
-  {
-    id: "req-3",
-    title: "API Performance Latency < 100ms",
-    description: "All core product page queries and gateway endpoint requests must respond within 100 milliseconds under a concurrent load of 5,000 active sessions.",
-    req_type: "non_functional",
-    priority: "medium",
-    status: "draft",
-    complexity: "complex",
-    estimated_effort_hours: 18,
-    category: "Performance",
-    acceptance_criteria: [
-      "95th percentile api latency is tested below 100ms during stress tests.",
-      "Edge caching policies are enforced on static product catalog headers.",
-      "Redis instances are optimized for quick key-value session lookups."
-    ]
-  },
-  {
-    id: "req-4",
-    title: "Payment Gateway Encryption standard",
-    description: "All checkout queries and credit card transmission lines must fully comply with PCI-DSS guidelines using TLS 1.3 key exchanges.",
-    req_type: "non_functional",
-    priority: "critical",
-    status: "confirmed",
-    complexity: "simple",
-    estimated_effort_hours: 8,
-    category: "Compliance",
-    acceptance_criteria: [
-      "Credit card raw values are never stored directly in SQL DB.",
-      "HTTPS endpoints block TLS versions below 1.2 during client handshakes.",
-      "Tokens are validated via Stripe elements secure gateway fields."
-    ]
-  }
-];
-
 export default function RequirementsPage() {
   const { projects, activeProjectId, setActiveProjectId } = useWorkspace();
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string>(activeProjectId || "all");
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string>(activeProjectId || "");
   const [reqType, setReqType] = React.useState("all");
   const [priorityFilter, setPriorityFilter] = React.useState("all");
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -85,27 +17,24 @@ export default function RequirementsPage() {
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
-    if (activeProjectId) {
-      setSelectedProjectId(activeProjectId);
-    }
-  }, [activeProjectId]);
+    if (activeProjectId) setSelectedProjectId(activeProjectId);
+    else if (projects.length > 0 && !selectedProjectId) setSelectedProjectId(projects[0].id);
+  }, [activeProjectId, projects]);
 
   const handleProjectChange = (val: string) => {
     setSelectedProjectId(val);
-    setActiveProjectId(val === "all" ? null : val);
+    setActiveProjectId(val || null);
   };
 
   const fetchRequirements = async () => {
-    if (selectedProjectId === "all") {
-      setDbRequirements([]);
-      return;
-    }
+    if (!selectedProjectId) { setDbRequirements([]); return; }
     setLoading(true);
     const supabase = createClient() as any;
     const { data } = await supabase
       .from("requirements")
       .select("*")
-      .eq("project_id", selectedProjectId);
+      .eq("project_id", selectedProjectId)
+      .order("created_at", { ascending: false });
     setDbRequirements(data || []);
     setLoading(false);
   };
@@ -114,8 +43,7 @@ export default function RequirementsPage() {
     fetchRequirements();
   }, [selectedProjectId]);
 
-  // Fallback to mock requirements if project is "all" or database returns empty list
-  const displayRequirements = dbRequirements.length > 0 ? dbRequirements : MOCK_REQUIREMENTS;
+  const displayRequirements = dbRequirements;
 
   const filteredRequirements = displayRequirements.filter((req) => {
     const matchesSearch = req.title.toLowerCase().includes(searchQuery.toLowerCase()) ||

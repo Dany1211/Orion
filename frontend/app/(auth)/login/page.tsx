@@ -2,12 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
-import { CheckCircle2, Mail, FlaskConical } from "lucide-react";
+import { CheckCircle2, Mail, FlaskConical, AlertCircle } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -29,6 +29,8 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const errorParam = searchParams.get("error");
   const [isLoading, setIsLoading] = React.useState(false);
   const [isSuccess, setIsSuccess] = React.useState(false);
 
@@ -94,6 +96,19 @@ export default function LoginPage() {
       transition={{ duration: 0.35, ease: "easeOut" }}
       className="space-y-5 w-full"
     >
+      {/* No-organization error banner */}
+      {errorParam === "no_org" && (
+        <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-xs font-bold text-red-800">Account setup incomplete</p>
+            <p className="text-[11px] font-medium text-red-700 mt-0.5">
+              Your account is not linked to any organization. Please contact your administrator or sign up to create a workspace.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Mock login banner */}
       {MOCK_LOGIN && (
         <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">

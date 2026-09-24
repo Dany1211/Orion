@@ -7,12 +7,14 @@ import {
   Building2, Sparkles, BrainCircuit, Calendar, FileText,
   AlertTriangle, ShieldAlert, CheckCircle2, Loader2, Code, Users,
   Settings2, Plus, ArrowUpRight, Search, ChevronRight, X, Play,
-  UploadCloud, FileSpreadsheet, FileClock, UserPlus, Info, Check, Trash2, ArrowRight
+  UploadCloud, FileSpreadsheet, FileClock, UserPlus, Info, Check, Trash2, ArrowRight, FolderGit2
 } from "lucide-react";
 import { useWorkspace } from "@/lib/contexts/workspace-context";
 import { createClient } from "@/lib/supabase/client";
+import { ProjectChat } from "@/components/dashboard/project-chat";
+import { GithubTracker } from "@/components/dashboard/github-tracker";
 
-type TabType = "overview" | "requirements" | "sprints" | "risks" | "sources";
+type TabType = "overview" | "requirements" | "sprints" | "risks" | "sources" | "github";
 
 // Server-side PDF/text extraction via API route
 async function extractTextViaServer(file: File): Promise<string> {
@@ -613,6 +615,12 @@ export default function ProjectDetailsPage() {
               { id: "requirements", label: "Extracted Specs", icon: Sparkles, badge: requirements.length },
               { id: "sprints", label: "Sprints & Roadmap", icon: Calendar, badge: sprints.length },
               { id: "risks", label: "Threat Matrix", icon: ShieldAlert, badge: risks.length },
+              {
+                id: "github",
+                label: "GitHub & Code Tracking",
+                icon: FolderGit2,
+                badge: project?.metadata?.github?.fullName ? `${project.metadata.github.progressPercentage || 0}%` : undefined
+              },
             ].map((tab) => {
               const active = activeTab === tab.id;
               return (
@@ -1075,6 +1083,25 @@ export default function ProjectDetailsPage() {
                 </motion.div>
               )}
 
+              {/* Tabs 5: GitHub Code Intelligence & Progress Tracking */}
+              {activeTab === "github" && (
+                <motion.div
+                  key="github"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="space-y-4"
+                >
+                  <GithubTracker
+                    projectId={project.id}
+                    project={project}
+                    requirements={requirements}
+                    sprints={sprints}
+                    onProjectUpdate={(updated) => setProject(updated)}
+                  />
+                </motion.div>
+              )}
+
             </AnimatePresence>
           </div>
         </div>
@@ -1498,6 +1525,24 @@ export default function ProjectDetailsPage() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Floating Groq-Powered AI Project Chatbot */}
+      {project && (
+        <ProjectChat
+          projectId={project.id}
+          projectName={project.name}
+          projectDescription={project.description}
+          techStack={project.tech_stack}
+          clientContext={{
+            project,
+            intelligence,
+            requirements,
+            sprints,
+            risks,
+            sources,
+          }}
+        />
+      )}
 
     </div>
   );

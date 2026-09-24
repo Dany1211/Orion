@@ -98,32 +98,37 @@ export default function AnalysisPage() {
     fetchSources();
   };
 
+  const [analysisStats, setAnalysisStats] = React.useState({ reqs: 0, sprints: 0 });
+
   const runAiAnalysis = async () => {
     if (sources.length === 0) return;
-    
+
     setIsAnalyzing(true);
     setAnalysisSuccess(false);
     setAnalysisStep(0);
 
-    // Simulate requirement intelligence pipeline steps
     const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    
-    await delay(1200);
-    setAnalysisStep(1); // Extracting raw structures...
-    
-    await delay(1400);
-    setAnalysisStep(2); // Analyzing modules & dependencies...
-    
-    await delay(1500);
-    setAnalysisStep(3); // Identifying project risk vectors...
-    
-    await delay(1200);
-    setAnalysisStep(4); // Compiling sprint plans & estimates...
-    
+
+    await delay(1200); setAnalysisStep(1);
+    await delay(1400); setAnalysisStep(2);
+    await delay(1500); setAnalysisStep(3);
+    await delay(1200); setAnalysisStep(4);
+
+    // Fetch real counts from DB after analysis
+    if (selectedProjectId) {
+      const supabase = createClient() as any;
+      const [{ count: reqCount }, { count: sprintCount }] = await Promise.all([
+        supabase.from("requirements").select("*", { count: "exact", head: true }).eq("project_id", selectedProjectId),
+        supabase.from("sprints").select("*", { count: "exact", head: true }).eq("project_id", selectedProjectId),
+      ]);
+      setAnalysisStats({ reqs: reqCount || 0, sprints: sprintCount || 0 });
+    }
+
     await delay(1000);
     setIsAnalyzing(false);
     setAnalysisSuccess(true);
   };
+
 
   const steps = [
     "Reading uploaded requirement documents…",
@@ -360,7 +365,7 @@ export default function AnalysisPage() {
             <div className="space-y-1 flex-1">
               <h4 className="text-sm font-black text-emerald-900 leading-none">Analysis Completed Successfully!</h4>
               <p className="text-xs text-emerald-700 font-medium leading-relaxed mt-1">
-                Orion AI completed the analysis run: extracted 24 requirements, estimated 84 effort hours, identified 3 technical risk factors, and compiled 4 sprints.
+                Orion AI completed the analysis run.{analysisStats.reqs > 0 ? ` Found ${analysisStats.reqs} requirement(s) and ${analysisStats.sprints} sprint(s) in this project.` : " Check the Requirements page to view extracted items."}
               </p>
               <div className="flex items-center gap-3 pt-3">
                 <button

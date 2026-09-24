@@ -13,15 +13,16 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = React.useState(false);
   const [saveSuccess, setSaveSuccess] = React.useState(false);
   
-  // API Key state
-  const [apiKey, setApiKey] = React.useState("orion_live_sk_8f7b2c9a1d4e6f3g5h7j9k2l8m0n");
+  // API Key state — starts empty, user would generate via backend
+  const [apiKey, setApiKey] = React.useState("");
   const [copied, setCopied] = React.useState(false);
+  const [isGeneratingKey, setIsGeneratingKey] = React.useState(false);
 
   // Integrations state
   const [integrations, setIntegrations] = React.useState({
-    jira: true,
+    jira: false,
     linear: false,
-    github: true,
+    github: false,
   });
 
   React.useEffect(() => {
@@ -152,24 +153,43 @@ export default function SettingsPage() {
 
           <div className="space-y-4">
             <p className="text-xs font-semibold text-zinc-500 leading-relaxed">
-              Use this secret key to authenticate API requests with the Orion CLI or to query extracted requirements pipeline data directly from your CI/CD scripts.
+              Use this secret key to authenticate API requests with the Orion CLI or to query extracted requirements directly from your CI/CD scripts.
             </p>
 
-            <div className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-xl p-3.5">
-              <input
-                type="password"
-                readOnly
-                value={apiKey}
-                className="flex-1 bg-transparent border-none text-xs font-mono font-bold text-zinc-700 focus:outline-none select-all"
-              />
-              <button
-                onClick={handleCopyKey}
-                className="h-8 px-3 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold text-zinc-600 flex-shrink-0"
-              >
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? "Copied!" : "Copy"}
-              </button>
-            </div>
+            {apiKey ? (
+              <div className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-xl p-3.5">
+                <input
+                  type="password"
+                  readOnly
+                  value={apiKey}
+                  className="flex-1 bg-transparent border-none text-xs font-mono font-bold text-zinc-700 focus:outline-none select-all"
+                />
+                <button
+                  onClick={handleCopyKey}
+                  className="h-8 px-3 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold text-zinc-600 flex-shrink-0"
+                >
+                  {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+            ) : (
+              <div className="text-center py-6 border border-dashed border-zinc-200 rounded-xl space-y-3">
+                <p className="text-xs font-semibold text-zinc-500">No API key generated yet.</p>
+                <button
+                  disabled={isGeneratingKey}
+                  onClick={() => {
+                    setIsGeneratingKey(true);
+                    setTimeout(() => {
+                      setApiKey("orion_live_sk_" + Math.random().toString(36).slice(2, 18));
+                      setIsGeneratingKey(false);
+                    }, 1000);
+                  }}
+                  className="h-8 px-4 rounded-lg bg-zinc-900 text-xs font-bold text-white hover:bg-zinc-800 transition-colors"
+                >
+                  {isGeneratingKey ? "Generating…" : "Generate API Key"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

@@ -94,6 +94,8 @@ declare
   org_name text;
   org_slug text;
   name_part text;
+  join_org_id uuid;
+  join_role text;
 begin
   -- 1. Create the profile first (so organizations FK check passes)
   insert into profiles (id, email, full_name)
@@ -103,33 +105,64 @@ begin
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
   );
 
-  -- 2. Determine organization name (default to 'My Workspace' or user's name if empty)
-  org_name := coalesce(
-    nullif(new.raw_user_meta_data->>'organization', ''),
-    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)) || ' Workspace'
-  );
+  -- 2. Check if user is joining an existing organization
+  begin
+    join_org_id := nullif(new.raw_user_meta_data->>'join_organization_id', '')::uuid;
+  exception when others then
+    join_org_id := null;
+  end;
+  join_role := coalesce(nullif(new.raw_user_meta_data->>'join_role', ''), 'member');
 
-  -- 3. Create a unique slug for the organization
-  org_slug := lower(regexp_replace(org_name, '[^a-zA-Z0-9]+', '-', 'g'));
-  org_slug := trim(both '-' from org_slug);
-  if org_slug = '' then
-    org_slug := 'workspace';
+  if join_org_id is not null then
+    -- ── Path A: Join existing organization ──────────────────────────────────
+
+    -- Validate the organization exists
+    if not exists (select 1 from organizations where id = join_org_id) then
+      raise exception 'Organization % does not exist', join_org_id;
+    end if;
+
+    -- Link profile to the organization
+    update profiles
+    set organization_id = join_org_id
+    where id = new.id;
+
+    -- Add membership with chosen role (ignore if already a member)
+    insert into organization_members (organization_id, user_id, role)
+    values (join_org_id, new.id, join_role::member_role)
+    on conflict (organization_id, user_id) do nothing;
+
+  else
+    -- ── Path B: Create a new organization ───────────────────────────────────
+
+    -- Determine organization name
+    org_name := coalesce(
+      nullif(new.raw_user_meta_data->>'organization', ''),
+      coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)) || ' Workspace'
+    );
+
+    -- Create a unique slug
+    org_slug := lower(regexp_replace(org_name, '[^a-zA-Z0-9]+', '-', 'g'));
+    org_slug := trim(both '-' from org_slug);
+    if org_slug = '' then
+      org_slug := 'workspace';
+    end if;
+    org_slug := org_slug || '-' || substring(md5(random()::text) from 1 for 6);
+
+    -- Create the organization
+    insert into organizations (name, slug, owner_id)
+    values (org_name, org_slug, new.id)
+    returning id into org_id;
+
+    -- Link profile to the new organization
+    update profiles
+    set organization_id = org_id
+    where id = new.id;
+
+    -- Add membership as owner
+    insert into organization_members (organization_id, user_id, role)
+    values (org_id, new.id, 'owner');
+
   end if;
-  org_slug := org_slug || '-' || substring(md5(random()::text) from 1 for 6);
-
-  -- 4. Create the organization
-  insert into organizations (name, slug, owner_id)
-  values (org_name, org_slug, new.id)
-  returning id into org_id;
-
-  -- 5. Update profile to associate with organization
-  update profiles
-  set organization_id = org_id
-  where id = new.id;
-
-  -- 6. Add membership record as owner
-  insert into organization_members (organization_id, user_id, role)
-  values (org_id, new.id, 'owner');
 
   return new;
 end;
