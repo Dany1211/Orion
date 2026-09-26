@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  ProjectClient,
   ClientPortalConfig,
   ClientMessage,
   ClientMeeting,
@@ -10,158 +11,16 @@ import {
 } from "@/lib/supabase/client-portal-types";
 import { createClient } from "@/lib/supabase/client";
 
-// ── Default Mock Configurations ──
-const DEFAULT_CONFIGS: Record<string, ClientPortalConfig> = {
-  "default": {
-    id: "cfg-default",
-    project_id: "default",
-    client_name: "Sarah Jenkins",
-    client_company: "Acme FinTech Global",
-    client_email: "sarah.j@acmefintech.com",
-    access_passcode: "ORION-CLIENT-2026",
-    is_portal_active: true,
-    welcome_heading: "Welcome to your Engineering Delivery Portal",
-    welcome_message: "Here you can monitor real-time development velocity, review architectural specifications, inspect sprint milestones, sign off on deliverables, and directly collaborate with your dedicated Project Lead.",
-    show_overview: true,
-    show_requirements: true,
-    show_sprints: true,
-    show_github: true,
-    show_risks: false, // PM decides what to show
-    show_reports: true,
-    show_budget: true,
-    show_meetings: true,
-    allow_approvals: true,
-    allow_direct_chat: true,
-    live_preview_url: "https://staging.orion-preview.app",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-};
-
-const DEFAULT_MESSAGES: ClientMessage[] = [
-  {
-    id: "msg-1",
-    project_id: "default",
-    sender_role: "pm",
-    sender_name: "Alex Rivera (Project Manager)",
-    sender_email: "alex@orion.ai",
-    sender_avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces",
-    content: "Hi Sarah! Welcome to the Orion Client Portal. We have finalized Sprint 2 deliverable milestones and attached the SRS verification report for your sign-off.",
-    topic: "Milestone Sign-off",
-    attachment_name: "SRS_Architecture_Scope_v2.4.pdf",
-    attachment_type: "pdf",
-    read_by_recipient: true,
-    is_pinned: true,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-  },
-  {
-    id: "msg-2",
-    project_id: "default",
-    sender_role: "client",
-    sender_name: "Sarah Jenkins",
-    sender_email: "sarah.j@acmefintech.com",
-    sender_avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100&h=100&fit=crop&crop=faces",
-    content: "Thanks Alex! The team reviewed the user authentication and biometric gateway flows. Looks great! Can we hop on a quick call today to clarify the OAuth2 token expiration window?",
-    topic: "Requirement Clarification",
-    read_by_recipient: true,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
-  },
-  {
-    id: "msg-3",
-    project_id: "default",
-    sender_role: "pm",
-    sender_name: "Alex Rivera (Project Manager)",
-    sender_email: "alex@orion.ai",
-    sender_avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces",
-    content: "Absolutely! I scheduled our bi-weekly syncing meeting for 3:00 PM. You can click 'Join Meeting Now' right inside our Orion portal room.",
-    topic: "Meeting Follow-up",
-    read_by_recipient: false,
-    created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-  },
-];
-
-const DEFAULT_MEETINGS: ClientMeeting[] = [
-  {
-    id: "meet-1",
-    project_id: "default",
-    project_name: "FinTech Mobile Gateway",
-    title: "Sprint 2 Architecture & Client Sign-Off Sync",
-    room_id: "orion-sync-789",
-    scheduled_at: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
-    duration_minutes: 30,
-    status: "scheduled",
-    host_name: "Alex Rivera (Project Manager)",
-    client_attendee: "Sarah Jenkins (Client Lead)",
-    agenda: "1. Review SRS Requirements\n2. Biometric Token Gateway demo\n3. Q&A on security policy\n4. Milestone 2 Sign-off approval",
-    live_notes: "Focusing on low-latency transactions and enterprise bank API compatibility.",
-    ai_summary: "Previous sync approved high-level SRS structure; pending final token expiration parameters.",
-    action_items: [
-      "Confirm OAuth2 token refresh policy (15 mins vs 30 mins)",
-      "Provide staging credentials for client testing",
-      "Sign off on Sprint 2 Milestone"
-    ],
-    meeting_url: "/meetings/orion-sync-789",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: "meet-2",
-    project_id: "default",
-    project_name: "FinTech Mobile Gateway",
-    title: "Sprint 1 Retrospective & SRS Review",
-    room_id: "orion-sprint1-review",
-    scheduled_at: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-    duration_minutes: 45,
-    status: "completed",
-    host_name: "Alex Rivera (Project Manager)",
-    client_attendee: "Sarah Jenkins (Client Lead)",
-    agenda: "Sprint 1 deliverables walkthrough, velocity overview, test coverage review.",
-    live_notes: "Sprint 1 passed all 18 test suites with 98% test coverage.",
-    ai_summary: "Client expressed high satisfaction with user onboarding screens and verified database encryption.",
-    action_items: [
-      "Deploy staging v1.1.0 build to demo server",
-      "Finalize wireframes for transaction dashboard"
-    ],
-    meeting_url: "/meetings/orion-sprint1-review",
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 50).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-  },
-];
-
-const DEFAULT_APPROVALS: ClientApprovalItem[] = [
-  {
-    id: "appr-1",
-    project_id: "default",
-    title: "Milestone 2: Biometric Authentication & Vault Gateway",
-    category: "Milestone Sign-off",
-    description: "Includes FaceID/Fingerprint integration, hardware key attestation, and AES-256 encrypted local token storage.",
-    item_type: "milestone",
-    status: "pending",
-    requested_by: "Alex Rivera (Project Manager)",
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-  },
-  {
-    id: "appr-2",
-    project_id: "default",
-    title: "SRS Specification v2.4 (Security Architecture Addendum)",
-    category: "SRS Specification",
-    description: "Clarification on multi-tenant tenant isolation and SOC2 audit logging requirements.",
-    item_type: "requirement",
-    status: "approved",
-    requested_by: "Alex Rivera (Project Manager)",
-    client_reviewer: "Sarah Jenkins",
-    client_feedback: "Approved with agreed 15-minute token TTL.",
-    decided_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-  },
-];
-
 interface ClientPortalContextType {
   clientSession: ClientSession | null;
   setClientSession: (session: ClientSession | null) => void;
+  clients: ProjectClient[];
   portalConfigs: Record<string, ClientPortalConfig>;
   getPortalConfig: (projectId: string) => ClientPortalConfig;
   updatePortalConfig: (projectId: string, updates: Partial<ClientPortalConfig>) => Promise<void>;
+  addClientToProject: (projectId: string, client: { name: string; email: string; company?: string; passcode: string }) => Promise<ProjectClient>;
+  authenticateClient: (email: string, passcode: string) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
+  registerClientAccount: (clientData: { name: string; email: string; company?: string; passcode: string; projectId: string }) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
   messages: ClientMessage[];
   sendMessage: (msg: Omit<ClientMessage, "id" | "created_at">) => Promise<ClientMessage>;
   meetings: ClientMeeting[];
@@ -172,72 +31,78 @@ interface ClientPortalContextType {
   approvals: ClientApprovalItem[];
   submitApprovalDecision: (approvalId: string, status: "approved" | "revision_requested", feedback?: string) => Promise<void>;
   requestApproval: (item: Omit<ClientApprovalItem, "id" | "created_at" | "status">) => Promise<ClientApprovalItem>;
-  loginAsClient: (clientEmail?: string) => void;
   logoutClient: () => void;
+  isLoading: boolean;
 }
 
 const ClientPortalContext = React.createContext<ClientPortalContextType | undefined>(undefined);
 
 export function ClientPortalProvider({ children }: { children: React.ReactNode }) {
+  const [isLoading, setIsLoading] = React.useState(true);
+
   const [clientSession, setClientSession] = React.useState<ClientSession | null>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_client_session");
       if (saved) {
-        try { return JSON.parse(saved); } catch (e) { }
+        try {
+          return JSON.parse(saved);
+        } catch (e) {}
       }
     }
-    return {
-      client_id: "client-sarah-1",
-      client_name: "Sarah Jenkins",
-      client_company: "Acme FinTech Global",
-      client_email: "sarah.j@acmefintech.com",
-      project_id: "default",
-      avatar_url: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100&h=100&fit=crop&crop=faces",
-      is_authenticated: true,
-    };
+    return null;
+  });
+
+  const [clients, setClients] = React.useState<ProjectClient[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("orion_project_clients");
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return [];
   });
 
   const [portalConfigs, setPortalConfigs] = React.useState<Record<string, ClientPortalConfig>>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_portal_configs");
       if (saved) {
-        try { return JSON.parse(saved); } catch (e) { }
+        try { return JSON.parse(saved); } catch (e) {}
       }
     }
-    return DEFAULT_CONFIGS;
+    return {};
   });
 
   const [messages, setMessages] = React.useState<ClientMessage[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_client_messages");
       if (saved) {
-        try { return JSON.parse(saved); } catch (e) { }
+        try { return JSON.parse(saved); } catch (e) {}
       }
     }
-    return DEFAULT_MESSAGES;
+    return [];
   });
 
   const [meetings, setMeetings] = React.useState<ClientMeeting[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_client_meetings");
       if (saved) {
-        try { return JSON.parse(saved); } catch (e) { }
+        try { return JSON.parse(saved); } catch (e) {}
       }
     }
-    return DEFAULT_MEETINGS;
+    return [];
   });
 
   const [approvals, setApprovals] = React.useState<ClientApprovalItem[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_client_approvals");
       if (saved) {
-        try { return JSON.parse(saved); } catch (e) { }
+        try { return JSON.parse(saved); } catch (e) {}
       }
     }
-    return DEFAULT_APPROVALS;
+    return [];
   });
 
-  // Sync state changes to local storage
+  // Local storage persistence
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       if (clientSession) {
@@ -247,6 +112,12 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       }
     }
   }, [clientSession]);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("orion_project_clients", JSON.stringify(clients));
+    }
+  }, [clients]);
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -272,70 +143,82 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     }
   }, [approvals]);
 
-  // Initial load from Supabase if available
-  React.useEffect(() => {
-    async function loadFromSupabase() {
-      try {
-        const supabase = createClient() as any;
-        const [configsRes, msgRes, meetRes, apprRes] = await Promise.allSettled([
-          supabase.from("client_portal_configs").select("*"),
-          supabase.from("client_pm_messages").select("*").order("created_at", { ascending: true }),
-          supabase.from("client_meetings").select("*").order("scheduled_at", { ascending: false }),
-          supabase.from("client_approvals").select("*").order("created_at", { ascending: false }),
-        ]);
+  // Load real data from Supabase
+  const loadDatabaseData = async () => {
+    setIsLoading(true);
+    try {
+      const supabase = createClient() as any;
 
-        if (configsRes.status === "fulfilled" && configsRes.value.data?.length > 0) {
-          const dict: Record<string, ClientPortalConfig> = {};
-          configsRes.value.data.forEach((c: any) => {
-            dict[c.project_id] = c;
-          });
-          setPortalConfigs((prev) => ({ ...prev, ...dict }));
-        }
+      const [clientsRes, configsRes, msgsRes, meetsRes, apprsRes] = await Promise.allSettled([
+        supabase.from("project_clients").select("*").order("created_at", { ascending: false }),
+        supabase.from("client_portal_configs").select("*"),
+        supabase.from("client_pm_messages").select("*").order("created_at", { ascending: true }),
+        supabase.from("client_meetings").select("*").order("scheduled_at", { ascending: false }),
+        supabase.from("client_approvals").select("*").order("created_at", { ascending: false }),
+      ]);
 
-        if (msgRes.status === "fulfilled" && msgRes.value.data?.length > 0) {
-          setMessages(msgRes.value.data);
-        }
-
-        if (meetRes.status === "fulfilled" && meetRes.value.data?.length > 0) {
-          setMeetings(meetRes.value.data);
-        }
-
-        if (apprRes.status === "fulfilled" && apprRes.value.data?.length > 0) {
-          setApprovals(apprRes.value.data);
-        }
-      } catch (err) {
-        // Fallback silently to local state
+      if (clientsRes.status === "fulfilled" && clientsRes.value.data) {
+        setClients(clientsRes.value.data);
       }
+
+      if (configsRes.status === "fulfilled" && configsRes.value.data) {
+        const dict: Record<string, ClientPortalConfig> = {};
+        configsRes.value.data.forEach((c: any) => {
+          dict[c.project_id] = c;
+        });
+        setPortalConfigs(dict);
+      }
+
+      if (msgsRes.status === "fulfilled" && msgsRes.value.data) {
+        setMessages(msgsRes.value.data);
+      }
+
+      if (meetsRes.status === "fulfilled" && meetsRes.value.data) {
+        setMeetings(meetsRes.value.data);
+      }
+
+      if (apprsRes.status === "fulfilled" && apprsRes.value.data) {
+        setApprovals(apprsRes.value.data);
+      }
+    } catch (err) {
+      console.warn("Database sync error (operating in local persistent mode):", err);
+    } finally {
+      setIsLoading(false);
     }
-    loadFromSupabase();
+  };
+
+  React.useEffect(() => {
+    loadDatabaseData();
   }, []);
 
   const getPortalConfig = (projectId: string): ClientPortalConfig => {
-    return (
-      portalConfigs[projectId] ||
-      portalConfigs["default"] || {
-        id: `cfg-${projectId}`,
-        project_id: projectId,
-        client_name: "Client Partner",
-        client_company: "Client Organization",
-        client_email: "client@example.com",
-        is_portal_active: true,
-        welcome_heading: "Project Delivery & Executive Portal",
-        welcome_message: "Track project milestones, inspect sprint tasks, sign off on deliverables, and collaborate with your team.",
-        show_overview: true,
-        show_requirements: true,
-        show_sprints: true,
-        show_github: true,
-        show_risks: false,
-        show_reports: true,
-        show_budget: true,
-        show_meetings: true,
-        allow_approvals: true,
-        allow_direct_chat: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-    );
+    if (portalConfigs[projectId]) {
+      return portalConfigs[projectId];
+    }
+
+    return {
+      id: `cfg-${projectId}`,
+      project_id: projectId,
+      client_name: "Client Partner",
+      client_company: "Client Organization",
+      client_email: "",
+      access_passcode: "",
+      is_portal_active: true,
+      welcome_heading: "Project Delivery & Executive Portal",
+      welcome_message: "Track project milestones, review confirmed specifications, inspect deliverables, and collaborate with your project lead.",
+      show_overview: true,
+      show_requirements: true,
+      show_sprints: true,
+      show_github: true,
+      show_risks: false,
+      show_reports: true,
+      show_budget: true,
+      show_meetings: true,
+      allow_approvals: true,
+      allow_direct_chat: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
   };
 
   const updatePortalConfig = async (projectId: string, updates: Partial<ClientPortalConfig>) => {
@@ -343,22 +226,180 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     const updated: ClientPortalConfig = {
       ...current,
       ...updates,
+      project_id: projectId,
       updated_at: new Date().toISOString(),
     };
 
     setPortalConfigs((prev) => ({
       ...prev,
       [projectId]: updated,
-      // also keep default synced if active
-      ...(projectId === "default" ? { default: updated } : {}),
     }));
 
     try {
       const supabase = createClient() as any;
       await supabase.from("client_portal_configs").upsert(updated, { onConflict: "project_id" });
-    } catch (e) {
-      // Local state already updated
+    } catch (e) {}
+  };
+
+  const addClientToProject = async (
+    projectId: string,
+    clientData: { name: string; email: string; company?: string; passcode: string }
+  ): Promise<ProjectClient> => {
+    const newClient: ProjectClient = {
+      id: `client-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      project_id: projectId,
+      client_name: clientData.name,
+      client_email: clientData.email.toLowerCase().trim(),
+      client_company: clientData.company || "Client Company",
+      passcode: clientData.passcode,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    setClients((prev) => [newClient, ...prev.filter((c) => !(c.project_id === projectId && c.client_email === newClient.client_email))]);
+
+    // Also update portal config client metadata
+    await updatePortalConfig(projectId, {
+      client_name: clientData.name,
+      client_email: clientData.email.toLowerCase().trim(),
+      client_company: clientData.company || "Client Company",
+      access_passcode: clientData.passcode,
+    });
+
+    try {
+      const supabase = createClient() as any;
+      await supabase.from("project_clients").upsert(newClient, { onConflict: "project_id,client_email" });
+    } catch (e) {}
+
+    return newClient;
+  };
+
+  const authenticateClient = async (
+    email: string,
+    passcode: string
+  ): Promise<{ success: boolean; error?: string; session?: ClientSession }> => {
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanPass = passcode.trim();
+
+    if (!cleanEmail || !cleanPass) {
+      return { success: false, error: "Please enter your client email and access passcode." };
     }
+
+    try {
+      const supabase = createClient() as any;
+
+      // 1. Check in project_clients table
+      const { data: clientRows, error: clientErr } = await supabase
+        .from("project_clients")
+        .select("*")
+        .eq("client_email", cleanEmail)
+        .eq("passcode", cleanPass)
+        .eq("is_active", true);
+
+      if (!clientErr && clientRows && clientRows.length > 0) {
+        const found = clientRows[0];
+        const session: ClientSession = {
+          client_id: found.id,
+          client_name: found.client_name,
+          client_company: found.client_company || "Client Organization",
+          client_email: found.client_email,
+          project_id: found.project_id,
+          is_authenticated: true,
+        };
+        setClientSession(session);
+        return { success: true, session };
+      }
+
+      // 2. Check in client_portal_configs table
+      const { data: configRows, error: configErr } = await supabase
+        .from("client_portal_configs")
+        .select("*")
+        .eq("client_email", cleanEmail)
+        .eq("access_passcode", cleanPass);
+
+      if (!configErr && configRows && configRows.length > 0) {
+        const cfg = configRows[0];
+        const session: ClientSession = {
+          client_id: cfg.id,
+          client_name: cfg.client_name,
+          client_company: cfg.client_company || "Client Organization",
+          client_email: cfg.client_email,
+          project_id: cfg.project_id,
+          is_authenticated: true,
+        };
+        setClientSession(session);
+        return { success: true, session };
+      }
+    } catch (e) {}
+
+    // Fallback: Check local state
+    const localClient = clients.find(
+      (c) => c.client_email.toLowerCase() === cleanEmail && c.passcode === cleanPass && c.is_active
+    );
+
+    if (localClient) {
+      const session: ClientSession = {
+        client_id: localClient.id,
+        client_name: localClient.client_name,
+        client_company: localClient.client_company || "Client Organization",
+        client_email: localClient.client_email,
+        project_id: localClient.project_id,
+        is_authenticated: true,
+      };
+      setClientSession(session);
+      return { success: true, session };
+    }
+
+    const localConfigMatch = Object.values(portalConfigs).find(
+      (cfg) => cfg.client_email?.toLowerCase() === cleanEmail && cfg.access_passcode === cleanPass
+    );
+
+    if (localConfigMatch) {
+      const session: ClientSession = {
+        client_id: localConfigMatch.id,
+        client_name: localConfigMatch.client_name,
+        client_company: localConfigMatch.client_company || "Client Organization",
+        client_email: localConfigMatch.client_email,
+        project_id: localConfigMatch.project_id,
+        is_authenticated: true,
+      };
+      setClientSession(session);
+      return { success: true, session };
+    }
+
+    return { success: false, error: "Invalid client credentials. Please check your email and passcode or contact your Project Manager." };
+  };
+
+  const registerClientAccount = async (clientData: {
+    name: string;
+    email: string;
+    company?: string;
+    passcode: string;
+    projectId: string;
+  }): Promise<{ success: boolean; error?: string; session?: ClientSession }> => {
+    if (!clientData.name || !clientData.email || !clientData.passcode || !clientData.projectId) {
+      return { success: false, error: "Please fill in all required fields." };
+    }
+
+    const newClient = await addClientToProject(clientData.projectId, {
+      name: clientData.name,
+      email: clientData.email,
+      company: clientData.company,
+      passcode: clientData.passcode,
+    });
+
+    const session: ClientSession = {
+      client_id: newClient.id,
+      client_name: newClient.client_name,
+      client_company: newClient.client_company || "Client Organization",
+      client_email: newClient.client_email,
+      project_id: newClient.project_id,
+      is_authenticated: true,
+    };
+
+    setClientSession(session);
+    return { success: true, session };
   };
 
   const sendMessage = async (msg: Omit<ClientMessage, "id" | "created_at">): Promise<ClientMessage> => {
@@ -373,16 +414,17 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     try {
       const supabase = createClient() as any;
       await supabase.from("client_pm_messages").insert(newMsg);
-    } catch (e) {
-      // Local storage handled
-    }
+    } catch (e) {}
+
     return newMsg;
   };
 
-  const scheduleMeeting = async (meeting: Omit<ClientMeeting, "id" | "created_at" | "updated_at">): Promise<ClientMeeting> => {
+  const scheduleMeeting = async (
+    meeting: Omit<ClientMeeting, "id" | "created_at" | "updated_at">
+  ): Promise<ClientMeeting> => {
     const newMeeting: ClientMeeting = {
       ...meeting,
-      id: `meet-${Date.now()}`,
+      id: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -392,30 +434,35 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     try {
       const supabase = createClient() as any;
       await supabase.from("client_meetings").insert(newMeeting);
-    } catch (e) {
-      // Local storage handled
-    }
+    } catch (e) {}
+
     return newMeeting;
   };
 
   const updateMeetingNotes = async (meetingId: string, notes: string) => {
     setMeetings((prev) =>
-      prev.map((m) => (m.id === meetingId || m.room_id === meetingId ? { ...m, live_notes: notes, updated_at: new Date().toISOString() } : m))
+      prev.map((m) =>
+        m.id === meetingId || m.room_id === meetingId
+          ? { ...m, live_notes: notes, updated_at: new Date().toISOString() }
+          : m
+      )
     );
 
     try {
       const supabase = createClient() as any;
-      await supabase.from("client_meetings").update({ live_notes: notes, updated_at: new Date().toISOString() }).eq("id", meetingId);
-    } catch (e) { }
+      await supabase
+        .from("client_meetings")
+        .update({ live_notes: notes, updated_at: new Date().toISOString() })
+        .eq("id", meetingId);
+    } catch (e) {}
   };
 
   const generateAiMeetingSummary = async (meetingId: string, notes: string) => {
-    // Intelligent AI summarizer
-    const summary = `Executive Summary: The project manager and client aligned on critical milestones and verification parameters. Discussed items include technical specifications, architectural safety compliance, and timeline milestones.`;
+    const summary = `Executive Summary: Meeting takeaways recorded. Project Lead and Client reviewed current milestone status, requirement alignments, and agreed action steps.`;
     const actionItems = [
-      "Project Manager to dispatch revised technical specification addendum",
-      "Client to review and sign off on staging build",
-      "Next sync scheduled for upcoming sprint review",
+      "Review sprint deliverables on staging environment",
+      "Sign off on milestone approval item",
+      "Next sync scheduled for roadmap review",
     ];
 
     setMeetings((prev) =>
@@ -432,23 +479,34 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         .from("client_meetings")
         .update({ ai_summary: summary, action_items: actionItems, updated_at: new Date().toISOString() })
         .eq("id", meetingId);
-    } catch (e) { }
+    } catch (e) {}
 
     return { summary, action_items: actionItems };
   };
 
   const updateMeetingStatus = async (meetingId: string, status: ClientMeeting["status"]) => {
     setMeetings((prev) =>
-      prev.map((m) => (m.id === meetingId || m.room_id === meetingId ? { ...m, status, updated_at: new Date().toISOString() } : m))
+      prev.map((m) =>
+        m.id === meetingId || m.room_id === meetingId
+          ? { ...m, status, updated_at: new Date().toISOString() }
+          : m
+      )
     );
 
     try {
       const supabase = createClient() as any;
-      await supabase.from("client_meetings").update({ status, updated_at: new Date().toISOString() }).eq("id", meetingId);
-    } catch (e) { }
+      await supabase
+        .from("client_meetings")
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq("id", meetingId);
+    } catch (e) {}
   };
 
-  const submitApprovalDecision = async (approvalId: string, status: "approved" | "revision_requested", feedback?: string) => {
+  const submitApprovalDecision = async (
+    approvalId: string,
+    status: "approved" | "revision_requested",
+    feedback?: string
+  ) => {
     setApprovals((prev) =>
       prev.map((a) =>
         a.id === approvalId
@@ -474,13 +532,15 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
           decided_at: new Date().toISOString(),
         })
         .eq("id", approvalId);
-    } catch (e) { }
+    } catch (e) {}
   };
 
-  const requestApproval = async (item: Omit<ClientApprovalItem, "id" | "created_at" | "status">): Promise<ClientApprovalItem> => {
+  const requestApproval = async (
+    item: Omit<ClientApprovalItem, "id" | "created_at" | "status">
+  ): Promise<ClientApprovalItem> => {
     const newItem: ClientApprovalItem = {
       ...item,
-      id: `appr-${Date.now()}`,
+      id: `appr-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       status: "pending",
       created_at: new Date().toISOString(),
     };
@@ -490,22 +550,9 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     try {
       const supabase = createClient() as any;
       await supabase.from("client_approvals").insert(newItem);
-    } catch (e) { }
+    } catch (e) {}
 
     return newItem;
-  };
-
-  const loginAsClient = (clientEmail = "sarah.j@acmefintech.com") => {
-    const session: ClientSession = {
-      client_id: "client-sarah-1",
-      client_name: "Sarah Jenkins",
-      client_company: "Acme FinTech Global",
-      client_email: clientEmail,
-      project_id: "default",
-      avatar_url: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100&h=100&fit=crop&crop=faces",
-      is_authenticated: true,
-    };
-    setClientSession(session);
   };
 
   const logoutClient = () => {
@@ -517,9 +564,13 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       value={{
         clientSession,
         setClientSession,
+        clients,
         portalConfigs,
         getPortalConfig,
         updatePortalConfig,
+        addClientToProject,
+        authenticateClient,
+        registerClientAccount,
         messages,
         sendMessage,
         meetings,
@@ -530,8 +581,8 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         approvals,
         submitApprovalDecision,
         requestApproval,
-        loginAsClient,
         logoutClient,
+        isLoading,
       }}
     >
       {children}

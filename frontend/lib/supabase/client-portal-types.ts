@@ -1,3 +1,15 @@
+export interface ProjectClient {
+  id: string;
+  project_id: string;
+  client_name: string;
+  client_email: string;
+  client_company?: string;
+  passcode: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ClientPortalConfig {
   id: string;
   project_id: string;

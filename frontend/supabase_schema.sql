@@ -709,6 +709,29 @@ create policy "GitHub integration access" on project_github_integrations
   );
 
 -- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: project_clients (Dynamic Client Accounts & Project Access)
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists project_clients (
+  id                  uuid primary key default gen_random_uuid(),
+  project_id          uuid not null references projects(id) on delete cascade,
+  client_name         text not null,
+  client_email        text not null,
+  client_company      text,
+  passcode            text not null,
+  is_active           boolean default true,
+  created_at          timestamptz default now() not null,
+  updated_at          timestamptz default now() not null,
+  constraint unique_project_client unique (project_id, client_email)
+);
+create index if not exists idx_project_clients_project on project_clients(project_id);
+create index if not exists idx_project_clients_email on project_clients(client_email);
+alter table project_clients enable row level security;
+
+drop policy if exists "Project clients access" on project_clients;
+create policy "Project clients access" on project_clients
+  for all using (true);
+
+-- ════════════════════════════════════════════════════════════════════════════
 --  TABLE: client_portal_configs (Visibility & Client Portal Settings)
 -- ════════════════════════════════════════════════════════════════════════════
 create table if not exists client_portal_configs (
@@ -823,6 +846,6 @@ create policy "Client approvals access" on client_approvals
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  DONE
---  Tables: 20  |  Enums: 13  |  Triggers: auto-profile + updated_at
---  RLS: enabled on all 20 tables, Client Portal & Real-time Collab ready
+--  Tables: 21  |  Enums: 13  |  Triggers: auto-profile + updated_at
+--  RLS: enabled on all 21 tables, Dynamic Client Portal & Real-time Collab ready
 -- ════════════════════════════════════════════════════════════════════════════
