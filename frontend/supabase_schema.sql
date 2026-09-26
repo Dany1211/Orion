@@ -669,11 +669,48 @@ create policy "Report access" on project_reports
     )
   );
 
+-- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: project_github_integrations
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists project_github_integrations (
+  id                  uuid primary key default gen_random_uuid(),
+  project_id          uuid not null unique references projects(id) on delete cascade,
+  repo_url            text not null,
+  repo_name           text not null,
+  owner               text not null,
+  default_branch      text not null default 'main',
+  token               text,
+  stars               int default 0,
+  forks               int default 0,
+  open_issues         int default 0,
+  progress_percentage int default 0,
+  velocity_status     text default 'on_track',
+  ai_analysis         jsonb,
+  latest_commits      jsonb default '[]'::jsonb,
+  latest_pulls        jsonb default '[]'::jsonb,
+  latest_issues       jsonb default '[]'::jsonb,
+  latest_contributors jsonb default '[]'::jsonb,
+  last_synced_at      timestamptz default now() not null,
+  created_at          timestamptz default now() not null,
+  updated_at          timestamptz default now() not null
+);
+create index if not exists idx_github_integrations_project on project_github_integrations(project_id);
+
+alter table project_github_integrations enable row level security;
+
+drop policy if exists "GitHub integration access" on project_github_integrations;
+create policy "GitHub integration access" on project_github_integrations
+  for all using (
+    project_id in (
+      select p.id from projects p
+      join organization_members om on om.organization_id = p.organization_id
+      where om.user_id = auth.uid()
+    )
+  );
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  DONE
---  Tables: 15  |  Enums: 13  |  Triggers: auto-profile + updated_at x10
---  RLS: enabled on all 15 tables, all child-table policies scoped through
---       project -> organization_members (org-membership) rather than
---       unfiltered access to the full `projects` table.
+--  Tables: 16  |  Enums: 13  |  Triggers: auto-profile + updated_at
+--  RLS: enabled on all 16 tables, all child-table policies scoped through
+--       project -> organization_members (org-membership)
 -- ════════════════════════════════════════════════════════════════════════════
