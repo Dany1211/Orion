@@ -37,12 +37,10 @@ function ClientPortalShell({ children }: { children: React.ReactNode }) {
   const liveMeeting = projectMeetings.find((m) => m.status === "live" || m.status === "scheduled");
 
   const navItems = [
-    { label: "Executive Dashboard", href: "/client", icon: LayoutDashboard },
-    { label: "Milestones", href: "/client#sprints", icon: Layers },
-    { label: "Requirements", href: "/client#requirements", icon: FileSearch },
-    { label: "PM Direct Messages", href: "/client/messages", icon: MessageSquare },
+    { label: "Dashboard", href: "/client", icon: LayoutDashboard },
+    { label: "Messages", href: "/client/messages", icon: MessageSquare },
     {
-      label: "Video Meetings",
+      label: "Meetings",
       href: "/client/meetings",
       icon: Video,
       badge: liveMeeting?.status === "live" ? "LIVE" : undefined,
