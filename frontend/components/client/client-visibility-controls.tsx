@@ -23,6 +23,9 @@ import {
   KeyRound,
   Building,
   Trash2,
+  Users,
+  Database,
+  ArrowRight,
 } from "lucide-react";
 import { useClientPortal } from "@/lib/contexts/client-portal-context";
 import { ClientPortalConfig } from "@/lib/supabase/client-portal-types";
@@ -38,23 +41,33 @@ export function ClientVisibilityControls({
   projectName = "Active Project",
   onPreviewClientView,
 }: ClientVisibilityControlsProps) {
-  const { getPortalConfig, updatePortalConfig, clients, addClientToProject } = useClientPortal();
+  const {
+    getPortalConfig,
+    updatePortalConfig,
+    clientsDirectory,
+    projectClients,
+    assignClientToProject,
+    removeClientFromProject,
+  } = useClientPortal();
+
   const config = getPortalConfig(projectId);
 
   const [formState, setFormState] = React.useState<ClientPortalConfig>(config);
   const [isSaved, setIsSaved] = React.useState(false);
   const [copiedLink, setCopiedLink] = React.useState(false);
 
-  // Add Client Modal State
-  const [showAddClientModal, setShowAddClientModal] = React.useState(false);
+  // Modal State
+  const [showAddModal, setShowAddModal] = React.useState(false);
+  const [addMode, setAddMode] = React.useState<"select_existing" | "create_new">("select_existing");
+  const [selectedClientId, setSelectedClientId] = React.useState("");
   const [newClientName, setNewClientName] = React.useState("");
   const [newClientEmail, setNewClientEmail] = React.useState("");
   const [newClientCompany, setNewClientCompany] = React.useState("");
   const [newClientPasscode, setNewClientPasscode] = React.useState("");
-  const [addClientSuccess, setAddClientSuccess] = React.useState(false);
+  const [actionSuccess, setActionSuccess] = React.useState(false);
 
   // Project-specific clients
-  const projectClients = clients.filter((c) => c.project_id === projectId);
+  const currentProjectClients = projectClients.filter((c) => c.project_id === projectId);
 
   React.useEffect(() => {
     setFormState(getPortalConfig(projectId));
@@ -81,21 +94,36 @@ export function ClientVisibilityControls({
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
-  const handleAddClientSubmit = async (e: React.FormEvent) => {
+  const handleAssignSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newClientName || !newClientEmail || !newClientPasscode) return;
 
-    await addClientToProject(projectId, {
-      name: newClientName,
-      email: newClientEmail,
-      company: newClientCompany || formState.client_company,
-      passcode: newClientPasscode,
-    });
+    if (addMode === "select_existing") {
+      const foundClient = clientsDirectory.find((c) => c.id === selectedClientId);
+      if (!foundClient) return;
 
-    setAddClientSuccess(true);
+      await assignClientToProject(projectId, {
+        clientId: foundClient.id,
+        name: foundClient.name,
+        email: foundClient.email,
+        company: foundClient.company,
+        passcode: newClientPasscode || foundClient.passcode || "ORION-PASS-2026",
+      });
+    } else {
+      if (!newClientName || !newClientEmail || !newClientPasscode) return;
+
+      await assignClientToProject(projectId, {
+        name: newClientName,
+        email: newClientEmail,
+        company: newClientCompany || formState.client_company,
+        passcode: newClientPasscode,
+      });
+    }
+
+    setActionSuccess(true);
     setTimeout(() => {
-      setAddClientSuccess(false);
-      setShowAddClientModal(false);
+      setActionSuccess(false);
+      setShowAddModal(false);
+      setSelectedClientId("");
       setNewClientName("");
       setNewClientEmail("");
       setNewClientPasscode("");
@@ -177,21 +205,20 @@ export function ClientVisibilityControls({
             <span className="h-8 w-8 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center">
               <SlidersHorizontal className="h-4 w-4" />
             </span>
-            <h2 className="text-lg font-black text-zinc-900">Client Portal Governance & Visibility</h2>
+            <h2 className="text-lg font-black text-zinc-900">Client Management & Project Governance</h2>
           </div>
           <p className="text-xs text-zinc-500 font-medium mt-1">
-            Configure client accounts, credentials, and select visible project modules for{" "}
-            <span className="font-semibold text-zinc-800">{projectName}</span>.
+            Assign database clients to <span className="font-semibold text-zinc-800">{projectName}</span> and configure visible modules in real time.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
-            onClick={() => setShowAddClientModal(true)}
+            onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm shadow-indigo-600/20"
           >
             <UserPlus className="h-3.5 w-3.5" />
-            <span>Add Client to Project</span>
+            <span>Add / Link Client to Project</span>
           </button>
 
           <button
@@ -222,28 +249,40 @@ export function ClientVisibilityControls({
         </div>
       </div>
 
-      {/* ── Client Accounts List for This Project ── */}
+      {/* ── Assigned Clients Section ── */}
       <div className="bg-white rounded-2xl p-6 border border-zinc-100 shadow-sm space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
           <div className="flex items-center gap-2">
             <UserCheck className="h-4 w-4 text-indigo-600" />
-            <h3 className="text-sm font-bold text-zinc-900">Assigned Client Accounts</h3>
+            <h3 className="text-sm font-bold text-zinc-900">Clients Assigned to {projectName}</h3>
           </div>
           <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100">
-            {projectClients.length} Active Client{projectClients.length === 1 ? "" : "s"}
+            {currentProjectClients.length} Assigned Client{currentProjectClients.length === 1 ? "" : "s"}
           </span>
         </div>
 
-        {projectClients.length === 0 ? (
-          <div className="p-6 text-center rounded-xl bg-zinc-50 border border-dashed border-zinc-200 space-y-2">
-            <p className="text-xs font-bold text-zinc-700">No clients assigned yet</p>
-            <p className="text-[11px] text-zinc-500">
-              Click &quot;Add Client to Project&quot; above to create a client account with email and access passcode.
-            </p>
+        {currentProjectClients.length === 0 ? (
+          <div className="p-8 text-center rounded-2xl bg-zinc-50 border border-dashed border-zinc-200 space-y-3">
+            <div className="h-10 w-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
+              <Users className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-zinc-800">No clients linked to this project yet</p>
+              <p className="text-[11px] text-zinc-500 mt-0.5">
+                Click &quot;Add / Link Client to Project&quot; to pick an existing client from your database or register a new client.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              <span>Assign Client Now</span>
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {projectClients.map((client) => (
+            {currentProjectClients.map((client) => (
               <div
                 key={client.id}
                 className="p-4 rounded-xl border border-zinc-200 bg-zinc-50/60 flex items-center justify-between gap-3"
@@ -251,11 +290,13 @@ export function ClientVisibilityControls({
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-zinc-900">{client.client_name}</span>
-                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                      Active Access
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Active
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-600">{client.client_email}</p>
+                  <p className="text-xs text-zinc-600 flex items-center gap-1">
+                    <Mail className="h-3 w-3 text-zinc-400" /> {client.client_email}
+                  </p>
                   <p className="text-[11px] text-zinc-400">
                     Company: <strong className="text-zinc-700">{client.client_company || "N/A"}</strong> • Passcode:{" "}
                     <span className="font-mono bg-zinc-200 px-1.5 py-0.5 rounded text-zinc-800 text-[10px]">
@@ -263,6 +304,14 @@ export function ClientVisibilityControls({
                     </span>
                   </p>
                 </div>
+
+                <button
+                  onClick={() => removeClientFromProject(projectId, client.client_email)}
+                  className="p-2 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  title="Unassign client from this project"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </div>
             ))}
           </div>
@@ -273,7 +322,7 @@ export function ClientVisibilityControls({
       <div className="bg-white rounded-2xl p-6 border border-zinc-100 shadow-sm space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-zinc-100">
           <Sparkles className="h-4 w-4 text-indigo-600" />
-          <h3 className="text-sm font-bold text-zinc-900">Portal Greeting & Live App Link</h3>
+          <h3 className="text-sm font-bold text-zinc-900">Portal Greeting & Staging Preview</h3>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -300,7 +349,7 @@ export function ClientVisibilityControls({
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs font-bold text-zinc-700">Welcome Message / Instructions</label>
+            <label className="text-xs font-bold text-zinc-700">Welcome Message & Instructions for Client</label>
             <textarea
               value={formState.welcome_message}
               onChange={(e) => setFormState({ ...formState, welcome_message: e.target.value })}
@@ -316,9 +365,9 @@ export function ClientVisibilityControls({
       <div className="bg-white rounded-2xl p-6 border border-zinc-100 shadow-sm space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
           <div>
-            <h3 className="text-sm font-bold text-zinc-900">Client Visibility Switches</h3>
+            <h3 className="text-sm font-bold text-zinc-900">Client Module Visibility</h3>
             <p className="text-xs text-zinc-500 font-medium">
-              Toggle ON/OFF specific sections. Disabled sections are completely hidden from the client.
+              Choose what sections are visible to clients of this project.
             </p>
           </div>
           <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100">
@@ -364,7 +413,6 @@ export function ClientVisibilityControls({
                   </div>
                 </div>
 
-                {/* Switch */}
                 <div
                   className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors flex-shrink-0 ${
                     isEnabled ? "bg-indigo-600" : "bg-zinc-300"
@@ -382,87 +430,153 @@ export function ClientVisibilityControls({
         </div>
       </div>
 
-      {/* ── Add Client Modal ── */}
-      {showAddClientModal && (
+      {/* ── Add / Link Client Modal ── */}
+      {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 max-w-md w-full border border-zinc-100 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-zinc-100">
               <div className="flex items-center gap-2">
                 <UserPlus className="h-4 w-4 text-indigo-600" />
-                <h3 className="text-base font-bold text-zinc-900">Add Client Account to Project</h3>
+                <h3 className="text-base font-bold text-zinc-900">Add Client to {projectName}</h3>
               </div>
               <button
-                onClick={() => setShowAddClientModal(false)}
+                onClick={() => setShowAddModal(false)}
                 className="text-xs text-zinc-400 hover:text-zinc-700 font-bold"
               >
                 Cancel
               </button>
             </div>
 
-            <form onSubmit={handleAddClientSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-zinc-700">Client Contact Full Name</label>
-                <input
-                  type="text"
-                  required
-                  value={newClientName}
-                  onChange={(e) => setNewClientName(e.target.value)}
-                  placeholder="e.g. John Doe"
-                  className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
+            {/* Mode Switcher */}
+            <div className="flex bg-zinc-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setAddMode("select_existing")}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+                  addMode === "select_existing"
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                <Database className="h-3.5 w-3.5" />
+                <span>Select from Database</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddMode("create_new")}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+                  addMode === "create_new"
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                <span>Create New Client</span>
+              </button>
+            </div>
 
-              <div>
-                <label className="text-xs font-bold text-zinc-700">Client Email (Login Username)</label>
-                <input
-                  type="email"
-                  required
-                  value={newClientEmail}
-                  onChange={(e) => setNewClientEmail(e.target.value)}
-                  placeholder="client@company.com"
-                  className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
+            <form onSubmit={handleAssignSubmit} className="space-y-3 pt-1">
+              {addMode === "select_existing" ? (
+                clientsDirectory.length === 0 ? (
+                  <div className="p-4 text-center bg-zinc-50 rounded-xl text-xs text-zinc-500">
+                    No clients in database directory yet. Switch to &quot;Create New Client&quot; to register your first client.
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="text-xs font-bold text-zinc-700">Select Client from Database</label>
+                      <select
+                        value={selectedClientId}
+                        onChange={(e) => setSelectedClientId(e.target.value)}
+                        required
+                        className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 bg-white focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="">-- Choose a registered client --</option>
+                        {clientsDirectory.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.email}) - {c.company || "No company"}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-              <div>
-                <label className="text-xs font-bold text-zinc-700">Client Organization / Company</label>
-                <input
-                  type="text"
-                  value={newClientCompany}
-                  onChange={(e) => setNewClientCompany(e.target.value)}
-                  placeholder="e.g. Acme Enterprise"
-                  className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
+                    <div>
+                      <label className="text-xs font-bold text-zinc-700">Access Passcode for this Project</label>
+                      <input
+                        type="text"
+                        value={newClientPasscode}
+                        onChange={(e) => setNewClientPasscode(e.target.value)}
+                        placeholder="Leave blank to use client's default passcode"
+                        className="mt-1 w-full text-xs font-mono rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </>
+                )
+              ) : (
+                <>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-700">Client Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={newClientName}
+                      onChange={(e) => setNewClientName(e.target.value)}
+                      placeholder="e.g. Sarah Jenkins"
+                      className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
 
-              <div>
-                <label className="text-xs font-bold text-zinc-700">Access Passcode / Password</label>
-                <input
-                  type="text"
-                  required
-                  value={newClientPasscode}
-                  onChange={(e) => setNewClientPasscode(e.target.value)}
-                  placeholder="e.g. ORION-PASS-2026"
-                  className="mt-1 w-full text-xs font-mono rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
-                />
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  The client will use this email and passcode to sign in at /client/login.
-                </p>
-              </div>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-700">Client Email (Login Username)</label>
+                    <input
+                      type="email"
+                      required
+                      value={newClientEmail}
+                      onChange={(e) => setNewClientEmail(e.target.value)}
+                      placeholder="client@company.com"
+                      className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-zinc-700">Client Organization / Company</label>
+                    <input
+                      type="text"
+                      value={newClientCompany}
+                      onChange={(e) => setNewClientCompany(e.target.value)}
+                      placeholder="e.g. Acme FinTech Global"
+                      className="mt-1 w-full text-xs rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-zinc-700">Access Passcode / Password</label>
+                    <input
+                      type="text"
+                      required
+                      value={newClientPasscode}
+                      onChange={(e) => setNewClientPasscode(e.target.value)}
+                      placeholder="e.g. ORION-2026-KEY"
+                      className="mt-1 w-full text-xs font-mono rounded-xl border border-zinc-200 px-3 py-2 text-zinc-900 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddClientModal(false)}
+                  onClick={() => setShowAddModal(false)}
                   className="flex-1 py-2.5 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50"
                 >
                   Close
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20"
+                  disabled={addMode === "select_existing" && !selectedClientId}
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold shadow-md shadow-indigo-600/20"
                 >
-                  {addClientSuccess ? "Client Added!" : "Create Client Account"}
+                  {actionSuccess ? "Assigned Successfully!" : "Assign to Project"}
                 </button>
               </div>
             </form>

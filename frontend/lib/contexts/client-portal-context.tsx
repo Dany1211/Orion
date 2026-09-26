@@ -2,25 +2,31 @@
 
 import * as React from "react";
 import {
+  Client,
   ProjectClient,
   ClientPortalConfig,
   ClientMessage,
   ClientMeeting,
   ClientApprovalItem,
   ClientSession,
+  ClientProjectRef,
 } from "@/lib/supabase/client-portal-types";
 import { createClient } from "@/lib/supabase/client";
 
 interface ClientPortalContextType {
   clientSession: ClientSession | null;
   setClientSession: (session: ClientSession | null) => void;
-  clients: ProjectClient[];
+  clientsDirectory: Client[];
+  projectClients: ProjectClient[];
   portalConfigs: Record<string, ClientPortalConfig>;
   getPortalConfig: (projectId: string) => ClientPortalConfig;
   updatePortalConfig: (projectId: string, updates: Partial<ClientPortalConfig>) => Promise<void>;
-  addClientToProject: (projectId: string, client: { name: string; email: string; company?: string; passcode: string }) => Promise<ProjectClient>;
+  createClientInDatabase: (client: { name: string; email: string; company?: string; phone?: string; passcode: string }) => Promise<Client>;
+  assignClientToProject: (projectId: string, clientData: { clientId?: string; name: string; email: string; company?: string; passcode: string }) => Promise<ProjectClient>;
+  removeClientFromProject: (projectId: string, clientEmail: string) => Promise<void>;
   authenticateClient: (email: string, passcode: string) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
   registerClientAccount: (clientData: { name: string; email: string; company?: string; passcode: string; projectId: string }) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
+  switchClientProject: (projectId: string) => void;
   messages: ClientMessage[];
   sendMessage: (msg: Omit<ClientMessage, "id" | "created_at">) => Promise<ClientMessage>;
   meetings: ClientMeeting[];
@@ -32,6 +38,7 @@ interface ClientPortalContextType {
   submitApprovalDecision: (approvalId: string, status: "approved" | "revision_requested", feedback?: string) => Promise<void>;
   requestApproval: (item: Omit<ClientApprovalItem, "id" | "created_at" | "status">) => Promise<ClientApprovalItem>;
   logoutClient: () => void;
+  refreshData: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -44,15 +51,23 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_client_session");
       if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {}
+        try { return JSON.parse(saved); } catch (e) {}
       }
     }
     return null;
   });
 
-  const [clients, setClients] = React.useState<ProjectClient[]>(() => {
+  const [clientsDirectory, setClientsDirectory] = React.useState<Client[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("orion_clients_directory");
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return [];
+  });
+
+  const [projectClients, setProjectClients] = React.useState<ProjectClient[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("orion_project_clients");
       if (saved) {
@@ -102,7 +117,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     return [];
   });
 
-  // Local storage persistence
+  // Local storage auto-sync
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       if (clientSession) {
@@ -115,9 +130,15 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("orion_project_clients", JSON.stringify(clients));
+      localStorage.setItem("orion_clients_directory", JSON.stringify(clientsDirectory));
     }
-  }, [clients]);
+  }, [clientsDirectory]);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("orion_project_clients", JSON.stringify(projectClients));
+    }
+  }, [projectClients]);
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -145,11 +166,11 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
   // Load real data from Supabase
   const loadDatabaseData = async () => {
-    setIsLoading(true);
     try {
       const supabase = createClient() as any;
 
-      const [clientsRes, configsRes, msgsRes, meetsRes, apprsRes] = await Promise.allSettled([
+      const [dirRes, clientsRes, configsRes, msgsRes, meetsRes, apprsRes] = await Promise.allSettled([
+        supabase.from("clients").select("*").order("created_at", { ascending: false }),
         supabase.from("project_clients").select("*").order("created_at", { ascending: false }),
         supabase.from("client_portal_configs").select("*"),
         supabase.from("client_pm_messages").select("*").order("created_at", { ascending: true }),
@@ -157,8 +178,12 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         supabase.from("client_approvals").select("*").order("created_at", { ascending: false }),
       ]);
 
+      if (dirRes.status === "fulfilled" && dirRes.value.data) {
+        setClientsDirectory(dirRes.value.data);
+      }
+
       if (clientsRes.status === "fulfilled" && clientsRes.value.data) {
-        setClients(clientsRes.value.data);
+        setProjectClients(clientsRes.value.data);
       }
 
       if (configsRes.status === "fulfilled" && configsRes.value.data) {
@@ -181,14 +206,87 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         setApprovals(apprsRes.value.data);
       }
     } catch (err) {
-      console.warn("Database sync error (operating in local persistent mode):", err);
+      console.warn("Database sync note:", err);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Real-time Supabase replication subscription
   React.useEffect(() => {
     loadDatabaseData();
+
+    try {
+      const supabase = createClient() as any;
+      const channel = supabase
+        .channel("orion-realtime-client-hub")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "client_pm_messages" },
+          (payload: any) => {
+            if (payload.eventType === "INSERT") {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === payload.new.id)) return prev;
+                return [...prev, payload.new];
+              });
+            } else if (payload.eventType === "UPDATE") {
+              setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? payload.new : m)));
+            }
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "client_meetings" },
+          (payload: any) => {
+            if (payload.eventType === "INSERT") {
+              setMeetings((prev) => {
+                if (prev.some((m) => m.id === payload.new.id)) return prev;
+                return [payload.new, ...prev];
+              });
+            } else if (payload.eventType === "UPDATE") {
+              setMeetings((prev) => prev.map((m) => (m.id === payload.new.id ? payload.new : m)));
+            }
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "client_approvals" },
+          (payload: any) => {
+            if (payload.eventType === "INSERT") {
+              setApprovals((prev) => {
+                if (prev.some((a) => a.id === payload.new.id)) return prev;
+                return [payload.new, ...prev];
+              });
+            } else if (payload.eventType === "UPDATE") {
+              setApprovals((prev) => prev.map((a) => (a.id === payload.new.id ? payload.new : a)));
+            }
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "project_clients" },
+          () => {
+            loadDatabaseData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "client_portal_configs" },
+          (payload: any) => {
+            if (payload.new?.project_id) {
+              setPortalConfigs((prev) => ({
+                ...prev,
+                [payload.new.project_id]: payload.new,
+              }));
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    } catch (e) {}
   }, []);
 
   const getPortalConfig = (projectId: string): ClientPortalConfig => {
@@ -241,38 +339,89 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     } catch (e) {}
   };
 
-  const addClientToProject = async (
-    projectId: string,
-    clientData: { name: string; email: string; company?: string; passcode: string }
-  ): Promise<ProjectClient> => {
-    const newClient: ProjectClient = {
+  const createClientInDatabase = async (clientData: {
+    name: string;
+    email: string;
+    company?: string;
+    phone?: string;
+    passcode: string;
+  }): Promise<Client> => {
+    const newClient: Client = {
       id: `client-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      name: clientData.name,
+      email: clientData.email.toLowerCase().trim(),
+      company: clientData.company || "Client Organization",
+      phone: clientData.phone,
+      passcode: clientData.passcode,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    setClientsDirectory((prev) => [newClient, ...prev.filter((c) => c.email !== newClient.email)]);
+
+    try {
+      const supabase = createClient() as any;
+      await supabase.from("clients").upsert(newClient, { onConflict: "email" });
+    } catch (e) {}
+
+    return newClient;
+  };
+
+  const assignClientToProject = async (
+    projectId: string,
+    clientData: { clientId?: string; name: string; email: string; company?: string; passcode: string }
+  ): Promise<ProjectClient> => {
+    const cleanEmail = clientData.email.toLowerCase().trim();
+
+    // Ensure client exists in directory
+    await createClientInDatabase({
+      name: clientData.name,
+      email: cleanEmail,
+      company: clientData.company,
+      passcode: clientData.passcode,
+    });
+
+    const newAssignment: ProjectClient = {
+      id: `pcl-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       project_id: projectId,
+      client_id: clientData.clientId,
       client_name: clientData.name,
-      client_email: clientData.email.toLowerCase().trim(),
-      client_company: clientData.company || "Client Company",
+      client_email: cleanEmail,
+      client_company: clientData.company || "Client Organization",
       passcode: clientData.passcode,
       is_active: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    setClients((prev) => [newClient, ...prev.filter((c) => !(c.project_id === projectId && c.client_email === newClient.client_email))]);
+    setProjectClients((prev) => [
+      newAssignment,
+      ...prev.filter((c) => !(c.project_id === projectId && c.client_email === cleanEmail)),
+    ]);
 
-    // Also update portal config client metadata
     await updatePortalConfig(projectId, {
       client_name: clientData.name,
-      client_email: clientData.email.toLowerCase().trim(),
-      client_company: clientData.company || "Client Company",
+      client_email: cleanEmail,
+      client_company: clientData.company || "Client Organization",
       access_passcode: clientData.passcode,
     });
 
     try {
       const supabase = createClient() as any;
-      await supabase.from("project_clients").upsert(newClient, { onConflict: "project_id,client_email" });
+      await supabase.from("project_clients").upsert(newAssignment, { onConflict: "project_id,client_email" });
     } catch (e) {}
 
-    return newClient;
+    return newAssignment;
+  };
+
+  const removeClientFromProject = async (projectId: string, clientEmail: string) => {
+    const cleanEmail = clientEmail.toLowerCase().trim();
+    setProjectClients((prev) => prev.filter((c) => !(c.project_id === projectId && c.client_email === cleanEmail)));
+
+    try {
+      const supabase = createClient() as any;
+      await supabase.from("project_clients").delete().eq("project_id", projectId).eq("client_email", cleanEmail);
+    } catch (e) {}
   };
 
   const authenticateClient = async (
@@ -283,42 +432,50 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     const cleanPass = passcode.trim();
 
     if (!cleanEmail || !cleanPass) {
-      return { success: false, error: "Please enter your client email and access passcode." };
+      return { success: false, error: "Please enter your client email and passcode." };
     }
 
     try {
       const supabase = createClient() as any;
 
-      // 1. Check in project_clients table
-      const { data: clientRows, error: clientErr } = await supabase
+      // 1. Fetch all assigned project rows for this client
+      const { data: assignments, error: assignErr } = await supabase
         .from("project_clients")
-        .select("*")
+        .select("*, projects(id, name, title, description)")
         .eq("client_email", cleanEmail)
         .eq("passcode", cleanPass)
         .eq("is_active", true);
 
-      if (!clientErr && clientRows && clientRows.length > 0) {
-        const found = clientRows[0];
+      if (!assignErr && assignments && assignments.length > 0) {
+        const assignedProjects: ClientProjectRef[] = assignments.map((a: any) => ({
+          id: a.project_id,
+          name: a.projects?.name || a.projects?.title || "Assigned Project",
+          description: a.projects?.description,
+        }));
+
+        const primary = assignments[0];
         const session: ClientSession = {
-          client_id: found.id,
-          client_name: found.client_name,
-          client_company: found.client_company || "Client Organization",
-          client_email: found.client_email,
-          project_id: found.project_id,
+          client_id: primary.id,
+          client_name: primary.client_name,
+          client_company: primary.client_company || "Client Organization",
+          client_email: primary.client_email,
+          project_id: primary.project_id,
+          assigned_projects: assignedProjects,
           is_authenticated: true,
         };
+
         setClientSession(session);
         return { success: true, session };
       }
 
-      // 2. Check in client_portal_configs table
-      const { data: configRows, error: configErr } = await supabase
+      // 2. Check portal configs fallback
+      const { data: configRows } = await supabase
         .from("client_portal_configs")
-        .select("*")
+        .select("*, projects(id, name, title, description)")
         .eq("client_email", cleanEmail)
         .eq("access_passcode", cleanPass);
 
-      if (!configErr && configRows && configRows.length > 0) {
+      if (configRows && configRows.length > 0) {
         const cfg = configRows[0];
         const session: ClientSession = {
           client_id: cfg.id,
@@ -326,49 +483,47 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
           client_company: cfg.client_company || "Client Organization",
           client_email: cfg.client_email,
           project_id: cfg.project_id,
+          assigned_projects: [
+            {
+              id: cfg.project_id,
+              name: cfg.projects?.name || cfg.projects?.title || "Assigned Project",
+            },
+          ],
           is_authenticated: true,
         };
+
         setClientSession(session);
         return { success: true, session };
       }
     } catch (e) {}
 
     // Fallback: Check local state
-    const localClient = clients.find(
+    const matchingAssignments = projectClients.filter(
       (c) => c.client_email.toLowerCase() === cleanEmail && c.passcode === cleanPass && c.is_active
     );
 
-    if (localClient) {
+    if (matchingAssignments.length > 0) {
+      const primary = matchingAssignments[0];
+      const assignedProjects: ClientProjectRef[] = matchingAssignments.map((a) => ({
+        id: a.project_id,
+        name: a.client_company ? `${a.client_company} Project` : "Assigned Project",
+      }));
+
       const session: ClientSession = {
-        client_id: localClient.id,
-        client_name: localClient.client_name,
-        client_company: localClient.client_company || "Client Organization",
-        client_email: localClient.client_email,
-        project_id: localClient.project_id,
+        client_id: primary.id,
+        client_name: primary.client_name,
+        client_company: primary.client_company || "Client Organization",
+        client_email: primary.client_email,
+        project_id: primary.project_id,
+        assigned_projects: assignedProjects,
         is_authenticated: true,
       };
+
       setClientSession(session);
       return { success: true, session };
     }
 
-    const localConfigMatch = Object.values(portalConfigs).find(
-      (cfg) => cfg.client_email?.toLowerCase() === cleanEmail && cfg.access_passcode === cleanPass
-    );
-
-    if (localConfigMatch) {
-      const session: ClientSession = {
-        client_id: localConfigMatch.id,
-        client_name: localConfigMatch.client_name,
-        client_company: localConfigMatch.client_company || "Client Organization",
-        client_email: localConfigMatch.client_email,
-        project_id: localConfigMatch.project_id,
-        is_authenticated: true,
-      };
-      setClientSession(session);
-      return { success: true, session };
-    }
-
-    return { success: false, error: "Invalid client credentials. Please check your email and passcode or contact your Project Manager." };
+    return { success: false, error: "Invalid client credentials. Please check your email and passcode or ask your Project Manager to assign you." };
   };
 
   const registerClientAccount = async (clientData: {
@@ -382,7 +537,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       return { success: false, error: "Please fill in all required fields." };
     }
 
-    const newClient = await addClientToProject(clientData.projectId, {
+    const assignment = await assignClientToProject(clientData.projectId, {
       name: clientData.name,
       email: clientData.email,
       company: clientData.company,
@@ -390,16 +545,25 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     });
 
     const session: ClientSession = {
-      client_id: newClient.id,
-      client_name: newClient.client_name,
-      client_company: newClient.client_company || "Client Organization",
-      client_email: newClient.client_email,
-      project_id: newClient.project_id,
+      client_id: assignment.id,
+      client_name: assignment.client_name,
+      client_company: assignment.client_company || "Client Organization",
+      client_email: assignment.client_email,
+      project_id: assignment.project_id,
+      assigned_projects: [{ id: assignment.project_id, name: assignment.client_company || "Active Project" }],
       is_authenticated: true,
     };
 
     setClientSession(session);
     return { success: true, session };
+  };
+
+  const switchClientProject = (projectId: string) => {
+    if (!clientSession) return;
+    setClientSession({
+      ...clientSession,
+      project_id: projectId,
+    });
   };
 
   const sendMessage = async (msg: Omit<ClientMessage, "id" | "created_at">): Promise<ClientMessage> => {
@@ -458,11 +622,11 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
   };
 
   const generateAiMeetingSummary = async (meetingId: string, notes: string) => {
-    const summary = `Executive Summary: Meeting takeaways recorded. Project Lead and Client reviewed current milestone status, requirement alignments, and agreed action steps.`;
+    const summary = `Executive Summary: Direct sync conducted between Project Manager and Client. Confirmed deliverables, architecture specifications, and next sprint action items.`;
     const actionItems = [
-      "Review sprint deliverables on staging environment",
-      "Sign off on milestone approval item",
-      "Next sync scheduled for roadmap review",
+      "Review sprint milestone deliverables on staging environment",
+      "Sign off on pending milestone approval item",
+      "Next sync scheduled for upcoming sprint review",
     ];
 
     setMeetings((prev) =>
@@ -564,13 +728,17 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       value={{
         clientSession,
         setClientSession,
-        clients,
+        clientsDirectory,
+        projectClients,
         portalConfigs,
         getPortalConfig,
         updatePortalConfig,
-        addClientToProject,
+        createClientInDatabase,
+        assignClientToProject,
+        removeClientFromProject,
         authenticateClient,
         registerClientAccount,
+        switchClientProject,
         messages,
         sendMessage,
         meetings,
@@ -582,6 +750,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         submitApprovalDecision,
         requestApproval,
         logoutClient,
+        refreshData: loadDatabaseData,
         isLoading,
       }}
     >

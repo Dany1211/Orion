@@ -14,69 +14,97 @@ import {
   Sparkles,
   ExternalLink,
   ShieldCheck,
-  PhoneCall,
   Circle,
-  FolderGit2,
+  ChevronsUpDown,
+  FolderKanban,
 } from "lucide-react";
 import { ClientPortalProvider, useClientPortal } from "@/lib/contexts/client-portal-context";
 
 function ClientPortalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { clientSession, logoutClient, meetings } = useClientPortal();
+  const { clientSession, logoutClient, meetings, switchClientProject } = useClientPortal();
 
   // If on login page, render children directly without navbar
   if (pathname === "/client/login") {
     return <>{children}</>;
   }
 
-  const liveMeeting = meetings.find((m) => m.status === "live" || m.status === "scheduled");
+  const activeProjectId = clientSession?.project_id || "default";
+  const projectMeetings = meetings.filter(
+    (m) => m.project_id === activeProjectId || activeProjectId === "default"
+  );
+  const liveMeeting = projectMeetings.find((m) => m.status === "live" || m.status === "scheduled");
 
   const navItems = [
     { label: "Executive Dashboard", href: "/client", icon: LayoutDashboard },
-    { label: "Milestones & Sprints", href: "/client#sprints", icon: Layers },
-    { label: "SRS Requirements", href: "/client#requirements", icon: FileSearch },
-    { label: "Deliverables & Reports", href: "/client#deliverables", icon: FileSpreadsheet },
+    { label: "Milestones", href: "/client#sprints", icon: Layers },
+    { label: "Requirements", href: "/client#requirements", icon: FileSearch },
     { label: "PM Direct Messages", href: "/client/messages", icon: MessageSquare },
-    { label: "Video Meetings", href: "/client/meetings", icon: Video, badge: liveMeeting?.status === "live" ? "LIVE" : undefined },
+    {
+      label: "Video Meetings",
+      href: "/client/meetings",
+      icon: Video,
+      badge: liveMeeting?.status === "live" ? "LIVE" : undefined,
+    },
   ];
+
+  const assignedProjects = clientSession?.assigned_projects || [];
 
   return (
     <div className="min-h-screen bg-zinc-50 flex flex-col font-sans">
       {/* ── Client Portal Top Navigation ── */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-zinc-200/80 px-4 lg:px-8 py-3.5">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          {/* Logo & Client Badging */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-zinc-200/80 px-4 lg:px-8 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          {/* Logo & Project Switcher */}
           <div className="flex items-center gap-4">
             <Link href="/client" className="flex items-center gap-2.5 group">
               <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center text-white font-black text-base shadow-sm">
                 O
               </div>
-              <div>
+              <div className="hidden sm:block">
                 <div className="flex items-center gap-2">
                   <span className="text-base font-black text-zinc-900 tracking-tight">Orion</span>
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
-                    Client Executive Portal
+                    Client Portal
                   </span>
                 </div>
-                <p className="text-[11px] text-zinc-500 font-medium">
-                  {clientSession?.client_company || "Acme FinTech Global"}
+                <p className="text-[11px] text-zinc-500 font-medium truncate max-w-[160px]">
+                  {clientSession?.client_company || "Client Organization"}
                 </p>
               </div>
             </Link>
+
+            {/* Multi-Project Switcher Dropdown (if client has assigned projects) */}
+            {assignedProjects.length > 1 && (
+              <div className="relative">
+                <select
+                  value={clientSession?.project_id}
+                  onChange={(e) => switchClientProject(e.target.value)}
+                  className="text-xs font-bold rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 py-1.5 pl-3 pr-8 text-zinc-800 focus:outline-none focus:border-indigo-500 cursor-pointer shadow-sm appearance-none"
+                >
+                  {assignedProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      📁 {p.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            )}
           </div>
 
-          {/* Desktop Nav Links */}
+          {/* Nav Links */}
           <nav className="hidden md:flex items-center gap-1">
             {navItems.map((item) => {
-              const active = pathname === item.href || (item.href.includes("#") && pathname === "/client");
+              const active = pathname === item.href;
               const Icon = item.icon;
               return (
                 <Link
                   key={item.label}
                   href={item.href}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    pathname === item.href
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    active
                       ? "bg-indigo-50 text-indigo-700"
                       : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
                   }`}
@@ -96,14 +124,15 @@ function ClientPortalShell({ children }: { children: React.ReactNode }) {
 
           {/* Right Action: Live Meeting Link + User Pill */}
           <div className="flex items-center gap-3">
-            {/* Quick 1-Click Meeting Call */}
-            <Link
-              href="/meetings/orion-sync-789"
-              className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white text-xs font-bold transition-all shadow-sm shadow-indigo-600/20"
-            >
-              <Video className="h-3.5 w-3.5" />
-              <span>Join PM Meeting</span>
-            </Link>
+            {liveMeeting && (
+              <Link
+                href={`/meetings/${liveMeeting.room_id}`}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm shadow-indigo-600/20"
+              >
+                <Video className="h-3.5 w-3.5" />
+                <span>Join Video Room</span>
+              </Link>
+            )}
 
             {/* Client Profile / Logout */}
             <div className="flex items-center gap-2 pl-2 border-l border-zinc-200">
@@ -140,7 +169,7 @@ function ClientPortalShell({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* ── Client Portal Footer ── */}
-      <footer className="border-t border-zinc-200/80 bg-white py-6 px-4 text-center text-xs text-zinc-500">
+      <footer className="border-t border-zinc-200/80 bg-white py-5 px-4 text-center text-xs text-zinc-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>© 2026 Orion • Dedicated Client Delivery Portal</p>
           <div className="flex items-center gap-3 text-xs text-zinc-500">

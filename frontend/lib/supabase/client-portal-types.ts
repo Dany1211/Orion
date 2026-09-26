@@ -1,6 +1,19 @@
+export interface Client {
+  id: string;
+  name: string;
+  email: string;
+  company?: string;
+  phone?: string;
+  passcode: string;
+  avatar_url?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectClient {
   id: string;
   project_id: string;
+  client_id?: string;
   client_name: string;
   client_email: string;
   client_company?: string;
@@ -93,12 +106,19 @@ export interface ClientApprovalItem {
   created_at: string;
 }
 
+export interface ClientProjectRef {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface ClientSession {
   client_id: string;
   client_name: string;
   client_company: string;
   client_email: string;
   project_id: string;
+  assigned_projects?: ClientProjectRef[];
   avatar_url?: string;
   is_authenticated: boolean;
 }

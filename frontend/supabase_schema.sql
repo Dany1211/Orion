@@ -709,11 +709,33 @@ create policy "GitHub integration access" on project_github_integrations
   );
 
 -- ════════════════════════════════════════════════════════════════════════════
---  TABLE: project_clients (Dynamic Client Accounts & Project Access)
+--  TABLE: clients (Master Client Directory)
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists clients (
+  id                  uuid primary key default gen_random_uuid(),
+  name                text not null,
+  email               text not null unique,
+  company             text,
+  phone               text,
+  passcode            text not null,
+  avatar_url          text,
+  created_at          timestamptz default now() not null,
+  updated_at          timestamptz default now() not null
+);
+create index if not exists idx_clients_email on clients(email);
+alter table clients enable row level security;
+
+drop policy if exists "Clients directory access" on clients;
+create policy "Clients directory access" on clients
+  for all using (true);
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: project_clients (Dynamic Client Project Assignments)
 -- ════════════════════════════════════════════════════════════════════════════
 create table if not exists project_clients (
   id                  uuid primary key default gen_random_uuid(),
   project_id          uuid not null references projects(id) on delete cascade,
+  client_id           uuid references clients(id) on delete set null,
   client_name         text not null,
   client_email        text not null,
   client_company      text,
@@ -845,7 +867,19 @@ create policy "Client approvals access" on client_approvals
   for all using (true);
 
 -- ════════════════════════════════════════════════════════════════════════════
+--  ENABLE SUPABASE REALTIME FOR CLIENT PORTAL & LIVE COLLABORATION
+-- ════════════════════════════════════════════════════════════════════════════
+do $$ begin
+  alter publication supabase_realtime add table client_pm_messages;
+  alter publication supabase_realtime add table client_meetings;
+  alter publication supabase_realtime add table client_approvals;
+  alter publication supabase_realtime add table project_clients;
+  alter publication supabase_realtime add table client_portal_configs;
+exception when others then null;
+end $$;
+
+-- ════════════════════════════════════════════════════════════════════════════
 --  DONE
---  Tables: 21  |  Enums: 13  |  Triggers: auto-profile + updated_at
---  RLS: enabled on all 21 tables, Dynamic Client Portal & Real-time Collab ready
+--  Tables: 22  |  Enums: 13  |  Triggers: auto-profile + updated_at
+--  RLS: enabled on all 22 tables, Real-time Client Management ready
 -- ════════════════════════════════════════════════════════════════════════════
