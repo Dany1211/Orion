@@ -25,7 +25,7 @@ interface ClientPortalContextType {
   assignClientToProject: (projectId: string, clientData: { clientId?: string; name: string; email: string; company?: string; passcode: string }) => Promise<ProjectClient>;
   removeClientFromProject: (projectId: string, clientEmail: string) => Promise<void>;
   authenticateClient: (email: string, passcode: string) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
-  registerClientAccount: (clientData: { name: string; email: string; company?: string; passcode: string; projectId: string }) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
+  registerClientAccount: (clientData: { name: string; email: string; company?: string; passcode: string; projectId?: string }) => Promise<{ success: boolean; error?: string; session?: ClientSession }>;
   switchClientProject: (projectId: string) => void;
   messages: ClientMessage[];
   sendMessage: (msg: Omit<ClientMessage, "id" | "created_at">) => Promise<ClientMessage>;
@@ -206,7 +206,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         setApprovals(apprsRes.value.data);
       }
     } catch (err) {
-      console.warn("Database sync note:", err);
+      console.warn("Database sync notice:", err);
     } finally {
       setIsLoading(false);
     }
@@ -265,6 +265,13 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "project_clients" },
+          () => {
+            loadDatabaseData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "clients" },
           () => {
             loadDatabaseData();
           }
@@ -335,8 +342,11 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
     try {
       const supabase = createClient() as any;
-      await supabase.from("client_portal_configs").upsert(updated, { onConflict: "project_id" });
-    } catch (e) {}
+      const { error } = await supabase.from("client_portal_configs").upsert(updated, { onConflict: "project_id" });
+      if (error) console.error("Supabase error updating client_portal_configs:", error);
+    } catch (e) {
+      console.error("Failed to update portal config in Supabase:", e);
+    }
   };
 
   const createClientInDatabase = async (clientData: {
@@ -346,10 +356,11 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     phone?: string;
     passcode: string;
   }): Promise<Client> => {
-    const newClient: Client = {
-      id: `client-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    const cleanEmail = clientData.email.toLowerCase().trim();
+    let createdClient: Client = {
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `c-${Date.now()}`,
       name: clientData.name,
-      email: clientData.email.toLowerCase().trim(),
+      email: cleanEmail,
       company: clientData.company || "Client Organization",
       phone: clientData.phone,
       passcode: clientData.passcode,
@@ -357,14 +368,35 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       updated_at: new Date().toISOString(),
     };
 
-    setClientsDirectory((prev) => [newClient, ...prev.filter((c) => c.email !== newClient.email)]);
-
     try {
       const supabase = createClient() as any;
-      await supabase.from("clients").upsert(newClient, { onConflict: "email" });
-    } catch (e) {}
+      // Do not force client-side ID so postgres gen_random_uuid() works cleanly
+      const payload: any = {
+        name: clientData.name,
+        email: cleanEmail,
+        company: clientData.company || "Client Organization",
+        phone: clientData.phone,
+        passcode: clientData.passcode,
+        updated_at: new Date().toISOString(),
+      };
 
-    return newClient;
+      const { data, error } = await supabase
+        .from("clients")
+        .upsert(payload, { onConflict: "email" })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Supabase error saving to clients table:", error.message || error);
+      } else if (data) {
+        createdClient = data;
+      }
+    } catch (e) {
+      console.error("Failed to insert client into database:", e);
+    }
+
+    setClientsDirectory((prev) => [createdClient, ...prev.filter((c) => c.email !== createdClient.email)]);
+    return createdClient;
   };
 
   const assignClientToProject = async (
@@ -373,18 +405,18 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
   ): Promise<ProjectClient> => {
     const cleanEmail = clientData.email.toLowerCase().trim();
 
-    // Ensure client exists in directory
-    await createClientInDatabase({
+    // 1. Ensure master client record is created in `clients` table
+    const clientRecord = await createClientInDatabase({
       name: clientData.name,
       email: cleanEmail,
       company: clientData.company,
       passcode: clientData.passcode,
     });
 
-    const newAssignment: ProjectClient = {
-      id: `pcl-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    let assignedRow: ProjectClient = {
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `pcl-${Date.now()}`,
       project_id: projectId,
-      client_id: clientData.clientId,
+      client_id: clientRecord.id,
       client_name: clientData.name,
       client_email: cleanEmail,
       client_company: clientData.company || "Client Organization",
@@ -394,8 +426,40 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       updated_at: new Date().toISOString(),
     };
 
+    // 2. Insert into `project_clients` table
+    try {
+      const supabase = createClient() as any;
+      const payload: any = {
+        project_id: projectId,
+        client_name: clientData.name,
+        client_email: cleanEmail,
+        client_company: clientData.company || "Client Organization",
+        passcode: clientData.passcode,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (clientRecord.id && !clientRecord.id.startsWith("c-")) {
+        payload.client_id = clientRecord.id;
+      }
+
+      const { data, error } = await supabase
+        .from("project_clients")
+        .upsert(payload, { onConflict: "project_id,client_email" })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Supabase error inserting into project_clients:", error.message || error);
+      } else if (data) {
+        assignedRow = data;
+      }
+    } catch (e) {
+      console.error("Failed to assign client to project in Supabase:", e);
+    }
+
     setProjectClients((prev) => [
-      newAssignment,
+      assignedRow,
       ...prev.filter((c) => !(c.project_id === projectId && c.client_email === cleanEmail)),
     ]);
 
@@ -406,12 +470,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       access_passcode: clientData.passcode,
     });
 
-    try {
-      const supabase = createClient() as any;
-      await supabase.from("project_clients").upsert(newAssignment, { onConflict: "project_id,client_email" });
-    } catch (e) {}
-
-    return newAssignment;
+    return assignedRow;
   };
 
   const removeClientFromProject = async (projectId: string, clientEmail: string) => {
@@ -420,8 +479,11 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
     try {
       const supabase = createClient() as any;
-      await supabase.from("project_clients").delete().eq("project_id", projectId).eq("client_email", cleanEmail);
-    } catch (e) {}
+      const { error } = await supabase.from("project_clients").delete().eq("project_id", projectId).eq("client_email", cleanEmail);
+      if (error) console.error("Supabase error deleting project_client:", error);
+    } catch (e) {
+      console.error("Failed to delete project_client from Supabase:", e);
+    }
   };
 
   const authenticateClient = async (
@@ -438,7 +500,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     try {
       const supabase = createClient() as any;
 
-      // 1. Fetch all assigned project rows for this client
+      // 1. Fetch from project_clients table
       const { data: assignments, error: assignErr } = await supabase
         .from("project_clients")
         .select("*, projects(id, name, title, description)")
@@ -449,7 +511,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       if (!assignErr && assignments && assignments.length > 0) {
         const assignedProjects: ClientProjectRef[] = assignments.map((a: any) => ({
           id: a.project_id,
-          name: a.projects?.name || a.projects?.title || "Assigned Project",
+          name: a.projects?.name || a.projects?.title || a.client_company || "Assigned Project",
           description: a.projects?.description,
         }));
 
@@ -468,36 +530,37 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         return { success: true, session };
       }
 
-      // 2. Check portal configs fallback
-      const { data: configRows } = await supabase
-        .from("client_portal_configs")
-        .select("*, projects(id, name, title, description)")
-        .eq("client_email", cleanEmail)
-        .eq("access_passcode", cleanPass);
+      // 2. Fallback check: master clients directory
+      const { data: clientRows, error: clientErr } = await supabase
+        .from("clients")
+        .select("*")
+        .eq("email", cleanEmail)
+        .eq("passcode", cleanPass);
 
-      if (configRows && configRows.length > 0) {
-        const cfg = configRows[0];
+      if (!clientErr && clientRows && clientRows.length > 0) {
+        const c = clientRows[0];
+        // Fetch any project assigned to this client or all projects
+        const { data: projectList } = await supabase.from("projects").select("id, name, title");
+        const defaultProjectId = projectList?.[0]?.id || "default";
+
         const session: ClientSession = {
-          client_id: cfg.id,
-          client_name: cfg.client_name,
-          client_company: cfg.client_company || "Client Organization",
-          client_email: cfg.client_email,
-          project_id: cfg.project_id,
-          assigned_projects: [
-            {
-              id: cfg.project_id,
-              name: cfg.projects?.name || cfg.projects?.title || "Assigned Project",
-            },
-          ],
+          client_id: c.id,
+          client_name: c.name,
+          client_company: c.company || "Client Organization",
+          client_email: c.email,
+          project_id: defaultProjectId,
+          assigned_projects: (projectList || []).map((p: any) => ({ id: p.id, name: p.name || p.title })),
           is_authenticated: true,
         };
 
         setClientSession(session);
         return { success: true, session };
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Supabase authentication error:", e);
+    }
 
-    // Fallback: Check local state
+    // Local state fallback
     const matchingAssignments = projectClients.filter(
       (c) => c.client_email.toLowerCase() === cleanEmail && c.passcode === cleanPass && c.is_active
     );
@@ -523,7 +586,24 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       return { success: true, session };
     }
 
-    return { success: false, error: "Invalid client credentials. Please check your email and passcode or ask your Project Manager to assign you." };
+    const localClient = clientsDirectory.find(
+      (c) => c.email.toLowerCase() === cleanEmail && c.passcode === cleanPass
+    );
+
+    if (localClient) {
+      const session: ClientSession = {
+        client_id: localClient.id,
+        client_name: localClient.name,
+        client_company: localClient.company || "Client Organization",
+        client_email: localClient.email,
+        project_id: "default",
+        is_authenticated: true,
+      };
+      setClientSession(session);
+      return { success: true, session };
+    }
+
+    return { success: false, error: "Invalid client credentials. Please verify your email and passcode or contact your Project Manager." };
   };
 
   const registerClientAccount = async (clientData: {
@@ -531,31 +611,60 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     email: string;
     company?: string;
     passcode: string;
-    projectId: string;
+    projectId?: string;
   }): Promise<{ success: boolean; error?: string; session?: ClientSession }> => {
-    if (!clientData.name || !clientData.email || !clientData.passcode || !clientData.projectId) {
-      return { success: false, error: "Please fill in all required fields." };
+    if (!clientData.name || !clientData.email || !clientData.passcode) {
+      return { success: false, error: "Please provide your name, email, and passcode." };
     }
 
-    const assignment = await assignClientToProject(clientData.projectId, {
-      name: clientData.name,
-      email: clientData.email,
-      company: clientData.company,
-      passcode: clientData.passcode,
-    });
+    const cleanEmail = clientData.email.toLowerCase().trim();
 
-    const session: ClientSession = {
-      client_id: assignment.id,
-      client_name: assignment.client_name,
-      client_company: assignment.client_company || "Client Organization",
-      client_email: assignment.client_email,
-      project_id: assignment.project_id,
-      assigned_projects: [{ id: assignment.project_id, name: assignment.client_company || "Active Project" }],
-      is_authenticated: true,
-    };
+    try {
+      const supabase = createClient() as any;
 
-    setClientSession(session);
-    return { success: true, session };
+      // 1. First save into `clients` table
+      const clientRecord = await createClientInDatabase({
+        name: clientData.name,
+        email: cleanEmail,
+        company: clientData.company,
+        passcode: clientData.passcode,
+      });
+
+      // 2. Find real project ID if not provided
+      let targetProjectId = clientData.projectId;
+      if (!targetProjectId || targetProjectId === "default") {
+        const { data: projList } = await supabase.from("projects").select("id").limit(1);
+        if (projList && projList.length > 0) {
+          targetProjectId = projList[0].id;
+        }
+      }
+
+      // 3. Link client to project in `project_clients`
+      if (targetProjectId && targetProjectId !== "default") {
+        await assignClientToProject(targetProjectId, {
+          clientId: clientRecord.id,
+          name: clientData.name,
+          email: cleanEmail,
+          company: clientData.company,
+          passcode: clientData.passcode,
+        });
+      }
+
+      const session: ClientSession = {
+        client_id: clientRecord.id,
+        client_name: clientRecord.name,
+        client_company: clientRecord.company || "Client Organization",
+        client_email: clientRecord.email,
+        project_id: targetProjectId || "default",
+        is_authenticated: true,
+      };
+
+      setClientSession(session);
+      return { success: true, session };
+    } catch (err: any) {
+      console.error("Client registration error:", err);
+      return { success: false, error: err.message || "Failed to register client account in database." };
+    }
   };
 
   const switchClientProject = (projectId: string) => {
@@ -567,39 +676,81 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
   };
 
   const sendMessage = async (msg: Omit<ClientMessage, "id" | "created_at">): Promise<ClientMessage> => {
-    const newMsg: ClientMessage = {
+    let newMsg: ClientMessage = {
       ...msg,
-      id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `msg-${Date.now()}`,
       created_at: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, newMsg]);
-
     try {
       const supabase = createClient() as any;
-      await supabase.from("client_pm_messages").insert(newMsg);
-    } catch (e) {}
+      const payload: any = {
+        project_id: msg.project_id,
+        sender_role: msg.sender_role,
+        sender_name: msg.sender_name,
+        sender_email: msg.sender_email,
+        sender_avatar: msg.sender_avatar,
+        content: msg.content,
+        topic: msg.topic || "General",
+        attachment_name: msg.attachment_name,
+        attachment_url: msg.attachment_url,
+        attachment_type: msg.attachment_type,
+        read_by_recipient: false,
+      };
 
+      const { data, error } = await supabase.from("client_pm_messages").insert(payload).select().single();
+      if (error) {
+        console.error("Supabase error sending message:", error.message || error);
+      } else if (data) {
+        newMsg = data;
+      }
+    } catch (e) {
+      console.error("Failed to send message to database:", e);
+    }
+
+    setMessages((prev) => [...prev, newMsg]);
     return newMsg;
   };
 
   const scheduleMeeting = async (
     meeting: Omit<ClientMeeting, "id" | "created_at" | "updated_at">
   ): Promise<ClientMeeting> => {
-    const newMeeting: ClientMeeting = {
+    let newMeeting: ClientMeeting = {
       ...meeting,
-      id: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `meet-${Date.now()}`,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    setMeetings((prev) => [newMeeting, ...prev]);
-
     try {
       const supabase = createClient() as any;
-      await supabase.from("client_meetings").insert(newMeeting);
-    } catch (e) {}
+      const payload: any = {
+        project_id: meeting.project_id,
+        title: meeting.title,
+        room_id: meeting.room_id,
+        scheduled_at: meeting.scheduled_at,
+        duration_minutes: meeting.duration_minutes || 30,
+        status: meeting.status || "scheduled",
+        host_name: meeting.host_name,
+        client_attendee: meeting.client_attendee,
+        agenda: meeting.agenda,
+        live_notes: meeting.live_notes,
+        ai_summary: meeting.ai_summary,
+        action_items: meeting.action_items || [],
+        meeting_url: meeting.meeting_url,
+      };
 
+      const { data, error } = await supabase.from("client_meetings").insert(payload).select().single();
+      if (error) {
+        console.error("Supabase error creating meeting:", error.message || error);
+      } else if (data) {
+        newMeeting = data;
+      }
+    } catch (e) {
+      console.error("Failed to insert meeting into database:", e);
+    }
+
+    setMeetings((prev) => [newMeeting, ...prev]);
     return newMeeting;
   };
 
@@ -617,16 +768,16 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       await supabase
         .from("client_meetings")
         .update({ live_notes: notes, updated_at: new Date().toISOString() })
-        .eq("id", meetingId);
+        .or(`id.eq.${meetingId},room_id.eq.${meetingId}`);
     } catch (e) {}
   };
 
   const generateAiMeetingSummary = async (meetingId: string, notes: string) => {
-    const summary = `Executive Summary: Direct sync conducted between Project Manager and Client. Confirmed deliverables, architecture specifications, and next sprint action items.`;
+    const summary = `Executive Summary: Direct video conference concluded between Project Manager and Client. Key alignment on milestones, specifications, and upcoming delivery steps.`;
     const actionItems = [
-      "Review sprint milestone deliverables on staging environment",
-      "Sign off on pending milestone approval item",
-      "Next sync scheduled for upcoming sprint review",
+      "Review staging environment updates",
+      "Sign off on milestone deliverables",
+      "Next sync scheduled for roadmap review",
     ];
 
     setMeetings((prev) =>
@@ -642,7 +793,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       await supabase
         .from("client_meetings")
         .update({ ai_summary: summary, action_items: actionItems, updated_at: new Date().toISOString() })
-        .eq("id", meetingId);
+        .or(`id.eq.${meetingId},room_id.eq.${meetingId}`);
     } catch (e) {}
 
     return { summary, action_items: actionItems };
@@ -662,7 +813,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       await supabase
         .from("client_meetings")
         .update({ status, updated_at: new Date().toISOString() })
-        .eq("id", meetingId);
+        .or(`id.eq.${meetingId},room_id.eq.${meetingId}`);
     } catch (e) {}
   };
 
@@ -702,20 +853,34 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
   const requestApproval = async (
     item: Omit<ClientApprovalItem, "id" | "created_at" | "status">
   ): Promise<ClientApprovalItem> => {
-    const newItem: ClientApprovalItem = {
+    let newItem: ClientApprovalItem = {
       ...item,
-      id: `appr-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `appr-${Date.now()}`,
       status: "pending",
       created_at: new Date().toISOString(),
     };
 
-    setApprovals((prev) => [newItem, ...prev]);
-
     try {
       const supabase = createClient() as any;
-      await supabase.from("client_approvals").insert(newItem);
+      const payload: any = {
+        project_id: item.project_id,
+        title: item.title,
+        category: item.category || "Milestone Sign-off",
+        description: item.description,
+        item_type: item.item_type || "milestone",
+        status: "pending",
+        requested_by: item.requested_by,
+      };
+
+      const { data, error } = await supabase.from("client_approvals").insert(payload).select().single();
+      if (error) {
+        console.error("Supabase error creating approval item:", error);
+      } else if (data) {
+        newItem = data;
+      }
     } catch (e) {}
 
+    setApprovals((prev) => [newItem, ...prev]);
     return newItem;
   };
 

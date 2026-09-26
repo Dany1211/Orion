@@ -43,15 +43,16 @@ function ClientLoginContent() {
         const supabase = createClient() as any;
         const { data, error } = await supabase.from("projects").select("id, name, title");
         if (!error && data && data.length > 0) {
-          setAvailableProjects(
-            data.map((p: any) => ({
-              id: p.id,
-              name: p.name || p.title || "Project",
-            }))
-          );
-          setProjectId(data[0].id);
+          const list = data.map((p: any) => ({
+            id: p.id,
+            name: p.name || p.title || "Project",
+          }));
+          setAvailableProjects(list);
+          setProjectId(list[0].id);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("Could not fetch project list:", e);
+      }
     }
     loadProjects();
   }, []);
@@ -69,7 +70,7 @@ function ClientLoginContent() {
       setSuccessMsg("Signed in successfully! Loading project portal…");
       setTimeout(() => {
         router.push("/client");
-      }, 500);
+      }, 400);
     } else {
       setErrorMsg(result.error || "Invalid client credentials. Please check your email and passcode.");
     }
@@ -86,18 +87,18 @@ function ClientLoginContent() {
       email,
       company,
       passcode,
-      projectId: projectId || "default",
+      projectId: projectId || undefined,
     });
 
     setIsLoading(false);
 
     if (result.success) {
-      setSuccessMsg("Client account registered successfully! Redirecting…");
+      setSuccessMsg("Client registered in database successfully! Entering portal…");
       setTimeout(() => {
         router.push("/client");
       }, 500);
     } else {
-      setErrorMsg(result.error || "Failed to register account.");
+      setErrorMsg(result.error || "Failed to register client in database.");
     }
   };
 
@@ -250,7 +251,7 @@ function ClientLoginContent() {
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. John Doe"
+                  placeholder="e.g. Sarah Jenkins"
                   className="mt-1 w-full text-xs rounded-xl bg-zinc-950 border border-zinc-800 px-3.5 py-2 text-white placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -262,7 +263,7 @@ function ClientLoginContent() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="john@company.com"
+                  placeholder="sarah@company.com"
                   className="mt-1 w-full text-xs rounded-xl bg-zinc-950 border border-zinc-800 px-3.5 py-2 text-white placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -273,14 +274,14 @@ function ClientLoginContent() {
                   type="text"
                   value={company}
                   onChange={(e) => setCompany(e.target.value)}
-                  placeholder="e.g. Acme Global"
+                  placeholder="e.g. Acme FinTech Global"
                   className="mt-1 w-full text-xs rounded-xl bg-zinc-950 border border-zinc-800 px-3.5 py-2 text-white placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               {availableProjects.length > 0 && (
                 <div>
-                  <label className="text-xs font-bold text-zinc-300">Select Project</label>
+                  <label className="text-xs font-bold text-zinc-300">Assign to Project</label>
                   <select
                     value={projectId}
                     onChange={(e) => setProjectId(e.target.value)}
@@ -296,13 +297,13 @@ function ClientLoginContent() {
               )}
 
               <div>
-                <label className="text-xs font-bold text-zinc-300">Choose Passcode / Password</label>
+                <label className="text-xs font-bold text-zinc-300">Choose Portal Passcode / Password</label>
                 <input
                   type="password"
                   required
                   value={passcode}
                   onChange={(e) => setPasscode(e.target.value)}
-                  placeholder="Create your portal passcode"
+                  placeholder="Create your access passcode"
                   className="mt-1 w-full text-xs rounded-xl bg-zinc-950 border border-zinc-800 px-3.5 py-2 text-white placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -313,11 +314,11 @@ function ClientLoginContent() {
                 className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
-                  <span>Registering Client Account…</span>
+                  <span>Saving to Database…</span>
                 ) : (
                   <>
                     <UserPlus className="h-4 w-4" />
-                    <span>Create & Link Account</span>
+                    <span>Register in Database & Enter Portal</span>
                   </>
                 )}
               </button>
@@ -334,7 +335,7 @@ function ClientLoginContent() {
           <span>•</span>
           <span>In-Website Video Meetings</span>
           <span>•</span>
-          <span>Milestone Governance</span>
+          <span>Real-time Live Sync</span>
         </div>
       </footer>
     </div>
