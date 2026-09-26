@@ -709,8 +709,120 @@ create policy "GitHub integration access" on project_github_integrations
   );
 
 -- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: client_portal_configs (Visibility & Client Portal Settings)
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists client_portal_configs (
+  id                  uuid primary key default gen_random_uuid(),
+  project_id          uuid not null unique references projects(id) on delete cascade,
+  client_name         text not null default 'Client Partner',
+  client_company      text default 'Client Organization',
+  client_email        text,
+  access_passcode     text,
+  is_portal_active    boolean default true,
+  welcome_heading     text default 'Executive Project Delivery Portal',
+  welcome_message     text default 'Track project milestones, review confirmed specifications, sign off on deliverables, and collaborate with your dedicated engineering team.',
+  show_overview       boolean default true,
+  show_requirements   boolean default true,
+  show_sprints        boolean default true,
+  show_github         boolean default true,
+  show_risks          boolean default false,
+  show_reports        boolean default true,
+  show_budget         boolean default true,
+  show_meetings       boolean default true,
+  allow_approvals     boolean default true,
+  allow_direct_chat   boolean default true,
+  live_preview_url    text,
+  created_at          timestamptz default now() not null,
+  updated_at          timestamptz default now() not null
+);
+create index if not exists idx_client_portal_project on client_portal_configs(project_id);
+alter table client_portal_configs enable row level security;
+
+drop policy if exists "Client portal config access" on client_portal_configs;
+create policy "Client portal config access" on client_portal_configs
+  for all using (true);
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: client_pm_messages (Bidirectional PM <-> Client Communication)
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists client_pm_messages (
+  id                  uuid primary key default gen_random_uuid(),
+  project_id          uuid not null references projects(id) on delete cascade,
+  sender_role         text not null check (sender_role in ('pm', 'client', 'system')),
+  sender_name         text not null,
+  sender_email        text,
+  sender_avatar       text,
+  content             text not null,
+  topic               text not null default 'General',
+  attachment_name     text,
+  attachment_url      text,
+  attachment_type     text,
+  is_pinned           boolean default false,
+  read_by_recipient   boolean default false,
+  created_at          timestamptz default now() not null
+);
+create index if not exists idx_client_messages_project on client_pm_messages(project_id);
+alter table client_pm_messages enable row level security;
+
+drop policy if exists "Client PM messages access" on client_pm_messages;
+create policy "Client PM messages access" on client_pm_messages
+  for all using (true);
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: client_meetings (In-Website Video Meetings & Scheduling)
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists client_meetings (
+  id                  uuid primary key default gen_random_uuid(),
+  project_id          uuid not null references projects(id) on delete cascade,
+  title               text not null,
+  room_id             text not null unique,
+  scheduled_at        timestamptz default now() not null,
+  duration_minutes    int default 45,
+  status              text not null default 'scheduled' check (status in ('scheduled', 'live', 'completed', 'cancelled')),
+  host_name           text not null default 'Project Manager',
+  client_attendee     text not null default 'Client Lead',
+  agenda              text,
+  live_notes          text,
+  ai_summary          text,
+  action_items        jsonb default '[]'::jsonb,
+  meeting_url         text,
+  created_at          timestamptz default now() not null,
+  updated_at          timestamptz default now() not null
+);
+create index if not exists idx_client_meetings_project on client_meetings(project_id);
+create index if not exists idx_client_meetings_room on client_meetings(room_id);
+alter table client_meetings enable row level security;
+
+drop policy if exists "Client meetings access" on client_meetings;
+create policy "Client meetings access" on client_meetings
+  for all using (true);
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  TABLE: client_approvals (Deliverable & Milestone Sign-offs)
+-- ════════════════════════════════════════════════════════════════════════════
+create table if not exists client_approvals (
+  id                  uuid primary key default gen_random_uuid(),
+  project_id          uuid not null references projects(id) on delete cascade,
+  title               text not null,
+  category            text not null default 'Milestone Sign-off',
+  description         text,
+  item_type           text not null default 'milestone',
+  status              text not null default 'pending' check (status in ('pending', 'approved', 'revision_requested')),
+  requested_by        text not null default 'Project Manager',
+  client_reviewer     text,
+  client_feedback     text,
+  decided_at          timestamptz,
+  created_at          timestamptz default now() not null
+);
+create index if not exists idx_client_approvals_project on client_approvals(project_id);
+alter table client_approvals enable row level security;
+
+drop policy if exists "Client approvals access" on client_approvals;
+create policy "Client approvals access" on client_approvals
+  for all using (true);
+
+-- ════════════════════════════════════════════════════════════════════════════
 --  DONE
---  Tables: 16  |  Enums: 13  |  Triggers: auto-profile + updated_at
---  RLS: enabled on all 16 tables, all child-table policies scoped through
---       project -> organization_members (org-membership)
+--  Tables: 20  |  Enums: 13  |  Triggers: auto-profile + updated_at
+--  RLS: enabled on all 20 tables, Client Portal & Real-time Collab ready
 -- ════════════════════════════════════════════════════════════════════════════

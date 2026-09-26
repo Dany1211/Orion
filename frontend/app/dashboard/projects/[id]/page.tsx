@@ -13,8 +13,10 @@ import { useWorkspace } from "@/lib/contexts/workspace-context";
 import { createClient } from "@/lib/supabase/client";
 import { ProjectChat } from "@/components/dashboard/project-chat";
 import { GithubTracker } from "@/components/dashboard/github-tracker";
+import { ClientVisibilityControls } from "@/components/client/client-visibility-controls";
+import { ClientPortalProvider } from "@/lib/contexts/client-portal-context";
 
-type TabType = "overview" | "requirements" | "sprints" | "risks" | "sources" | "github";
+type TabType = "overview" | "requirements" | "sprints" | "risks" | "sources" | "github" | "client_portal";
 
 // Server-side PDF/text extraction via API route
 async function extractTextViaServer(file: File): Promise<string> {
@@ -621,6 +623,12 @@ export default function ProjectDetailsPage() {
                 icon: FolderGit2,
                 badge: project?.metadata?.github?.fullName ? `${project.metadata.github.progressPercentage || 0}%` : undefined
               },
+              {
+                id: "client_portal",
+                label: "Client Portal & Visibility",
+                icon: ShieldAlert,
+                badge: "Client Live"
+              },
             ].map((tab) => {
               const active = activeTab === tab.id;
               return (
@@ -1099,6 +1107,29 @@ export default function ProjectDetailsPage() {
                     sprints={sprints}
                     onProjectUpdate={(updated) => setProject(updated)}
                   />
+                </motion.div>
+              )}
+
+              {/* Tabs 6: Client Portal & Visibility Controls */}
+              {activeTab === "client_portal" && (
+                <motion.div
+                  key="client_portal"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="space-y-4"
+                >
+                  <ClientPortalProvider>
+                    <ClientVisibilityControls
+                      projectId={project.id}
+                      projectName={project.name}
+                      onPreviewClientView={() => {
+                        if (typeof window !== "undefined") {
+                          window.open("/client", "_blank");
+                        }
+                      }}
+                    />
+                  </ClientPortalProvider>
                 </motion.div>
               )}
 

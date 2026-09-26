@@ -18,6 +18,9 @@ import {
   LogOut,
   HelpCircle,
   Bell,
+  ShieldCheck,
+  MessageSquare,
+  Video,
 } from "lucide-react";
 
 import { useWorkspace } from "@/lib/contexts/workspace-context";
@@ -33,6 +36,9 @@ export function Sidebar() {
     { label: "Requirements", href: "/dashboard/requirements", icon: FileSearch },
     { label: "AI Analysis", href: "/dashboard/analysis", icon: BrainCircuit, badgeColor: "bg-indigo-100 text-indigo-700" },
     { label: "Reports", href: "/dashboard/reports", icon: BarChart3 },
+    { label: "Client Portal", href: "/dashboard/client-portal", icon: ShieldCheck, badge: "Client", badgeColor: "bg-cyan-50 text-cyan-700" },
+    { label: "Client Messages", href: "/dashboard/messages", icon: MessageSquare },
+    { label: "Video Meetings", href: "/dashboard/meetings", icon: Video },
   ];
 
   const secondaryNav = [

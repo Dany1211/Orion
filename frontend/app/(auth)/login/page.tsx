@@ -17,7 +17,7 @@ import { SocialLogin } from "@/components/auth/social-login";
 
 // ─── Toggle: set to true for instant dashboard access without Supabase ────────
 const MOCK_LOGIN = false;
-// ─────────────────────────────────────────────────────────────────────────────
+export const dynamic = "force-dynamic";
 
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Enter a valid email address"),
@@ -27,7 +27,7 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const errorParam = searchParams.get("error");
@@ -129,12 +129,34 @@ export default function LoginPage() {
         </div>
       )}
 
+      {/* Client Portal Quick Switcher Banner */}
+      <div className="bg-gradient-to-r from-indigo-50 to-cyan-50 border border-indigo-100 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 text-white flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
+            CP
+          </div>
+          <div>
+            <p className="text-xs font-bold text-zinc-900">Are you a Client Partner?</p>
+            <p className="text-[11px] text-zinc-500 font-medium">
+              Access your project dashboard, meeting room & milestone approvals.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/client/login"
+          className="flex-shrink-0 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm shadow-indigo-600/20 flex items-center gap-1"
+        >
+          <span>Client Portal</span>
+          <span>→</span>
+        </Link>
+      </div>
+
       {/* Card */}
       <div className="bg-white rounded-2xl border border-zinc-100 shadow-xl shadow-zinc-200/40 overflow-hidden">
         <div className="px-8 pt-8 pb-6 border-b border-zinc-50">
-          <h1 className="text-2xl font-black text-zinc-900 tracking-tight">Welcome back</h1>
+          <h1 className="text-2xl font-black text-zinc-900 tracking-tight">Project Manager Sign In</h1>
           <p className="mt-1.5 text-sm font-medium text-zinc-500">
-            Sign in to your Orion workspace
+            Sign in to manage projects, AI analysis & client delivery
           </p>
         </div>
 
@@ -186,5 +208,13 @@ export default function LoginPage() {
         </Link>
       </p>
     </motion.div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <React.Suspense fallback={<div className="p-8 text-center text-zinc-400 text-xs">Loading…</div>}>
+      <LoginForm />
+    </React.Suspense>
   );
 }
