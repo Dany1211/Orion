@@ -61,19 +61,44 @@ export function GithubTracker({
   const [data, setData] = React.useState<any>(null);
   const [activeSubTab, setActiveSubTab] = React.useState<"analysis" | "commits" | "pulls" | "contributors">("analysis");
 
-  // Load existing data from localStorage or project metadata on mount
+  // Load existing data from database / server on mount
   React.useEffect(() => {
-    const savedData = localStorage.getItem(`orion_gh_analysis_${projectId}`);
-    if (savedData) {
+    let isMounted = true;
+
+    async function loadSavedRepo() {
+      if (!projectId) return;
       try {
-        setData(JSON.parse(savedData));
+        const res = await fetch(`/api/github/track?projectId=${projectId}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (isMounted && json.success && json.repo) {
+            setData(json);
+            setRepoInput(json.repo.fullName || json.repo.url || "");
+            setBranchInput(json.repo.currentBranch || "main");
+            return;
+          }
+        }
       } catch (e) {
-        console.error(e);
+        console.error("Failed to fetch saved GitHub integration:", e);
       }
-    } else if (project?.metadata?.github?.fullName) {
-      // Automatically sync if repo already linked
-      handleSync(project.metadata.github.fullName, project.metadata.github.branch || "main");
+
+      // LocalStorage fallback
+      const savedData = localStorage.getItem(`orion_gh_analysis_${projectId}`);
+      if (savedData && isMounted) {
+        try {
+          const parsed = JSON.parse(savedData);
+          setData(parsed);
+          setRepoInput(parsed.repo?.fullName || "");
+        } catch (e) {}
+      } else if (project?.metadata?.github?.fullName && isMounted) {
+        setRepoInput(project.metadata.github.fullName);
+      }
     }
+
+    loadSavedRepo();
+    return () => {
+      isMounted = false;
+    };
   }, [projectId]);
 
   const handleSync = async (overrideRepo?: string, overrideBranch?: string) => {
@@ -131,11 +156,14 @@ export function GithubTracker({
     }
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
     if (confirm("Disconnect this GitHub repository from this project?")) {
       setData(null);
       setRepoInput("");
       localStorage.removeItem(`orion_gh_analysis_${projectId}`);
+      try {
+        await fetch(`/api/github/track?projectId=${projectId}`, { method: "DELETE" });
+      } catch (e) {}
       if (onProjectUpdate && project) {
         const meta = { ...project.metadata };
         delete meta.github;

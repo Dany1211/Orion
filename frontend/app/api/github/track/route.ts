@@ -23,6 +23,113 @@ function parseGitHubRepo(input: string): { owner: string; repo: string } | null 
   return null;
 }
 
+// ── GET: Fetch saved GitHub tracking data for a project ─────────────────────
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const projectId = searchParams.get("projectId");
+
+    if (!projectId) {
+      return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
+    }
+
+    const supabase = (await createClient()) as any;
+
+    // 1. Check dedicated project_github_integrations table
+    const { data: integration, error: intErr } = await supabase
+      .from("project_github_integrations")
+      .select("*")
+      .eq("project_id", projectId)
+      .maybeSingle();
+
+    if (integration) {
+      return NextResponse.json({
+        success: true,
+        repo: {
+          fullName: `${integration.owner}/${integration.repo_name}`,
+          owner: integration.owner,
+          name: integration.repo_name,
+          url: integration.repo_url,
+          stars: integration.stars,
+          forks: integration.forks,
+          openIssues: integration.open_issues,
+          currentBranch: integration.default_branch,
+          lastPush: integration.last_synced_at,
+        },
+        commits: integration.latest_commits || [],
+        pullRequests: integration.latest_pulls || [],
+        issues: integration.latest_issues || [],
+        contributors: integration.latest_contributors || [],
+        aiAnalysis: integration.ai_analysis,
+      });
+    }
+
+    // 2. Fallback: check project.metadata.github
+    const { data: project } = await supabase
+      .from("projects")
+      .select("metadata")
+      .eq("id", projectId)
+      .maybeSingle();
+
+    if (project?.metadata?.github?.fullName) {
+      return NextResponse.json({
+        success: true,
+        repo: {
+          fullName: project.metadata.github.fullName,
+          owner: project.metadata.github.owner,
+          name: project.metadata.github.repo,
+          url: project.metadata.github.repoUrl,
+          stars: project.metadata.github.stars || 0,
+          forks: project.metadata.github.forks || 0,
+          openIssues: project.metadata.github.openIssues || 0,
+          currentBranch: project.metadata.github.branch || "main",
+          lastPush: project.metadata.github.lastSyncedAt,
+        },
+        commits: [],
+        pullRequests: [],
+        issues: [],
+        contributors: [],
+        aiAnalysis: {
+          progressPercentage: project.metadata.github.progressPercentage || 0,
+          executiveSummary: "Saved repository connected. Click 'Sync & AI Analyze' for fresh commit intelligence.",
+          velocityStatus: "on_track",
+          requirementProgress: [],
+          keyHighlights: [],
+        },
+      });
+    }
+
+    return NextResponse.json({ success: false, data: null });
+  } catch (error: any) {
+    console.error("GET github error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// ── DELETE: Disconnect repository ───────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const projectId = searchParams.get("projectId");
+    if (!projectId) return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
+
+    const supabase = (await createClient()) as any;
+    await supabase.from("project_github_integrations").delete().eq("project_id", projectId);
+
+    const { data: project } = await supabase.from("projects").select("metadata").eq("id", projectId).maybeSingle();
+    if (project) {
+      const meta = { ...project.metadata };
+      delete meta.github;
+      await supabase.from("projects").update({ metadata: meta }).eq("id", projectId);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+// ── POST: Connect / Sync & Analyze GitHub repository ────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const { projectId, repoUrl, branch = "main", token } = await req.json();
@@ -179,7 +286,6 @@ Only return raw JSON without markdown code fences or conversational text.`;
       aiAnalysis = JSON.parse(cleanJson);
     } catch (aiErr) {
       console.warn("AI analysis parse error:", aiErr);
-      // Fallback heuristics
       aiAnalysis = {
         progressPercentage: Math.min(100, Math.round((formattedCommits.length / 20) * 80)),
         executiveSummary: `Tracked ${formattedCommits.length} recent commits on ${branch}. Development is active across repository branches.`,
@@ -197,7 +303,33 @@ Only return raw JSON without markdown code fences or conversational text.`;
       };
     }
 
-    // ── Save GitHub config & latest sync in Supabase project metadata ──────
+    // ── Save to dedicated project_github_integrations table ─────────────────
+    try {
+      await supabase.from("project_github_integrations").upsert({
+        project_id: projectId,
+        repo_url: repoData.html_url || `https://github.com/${owner}/${repo}`,
+        repo_name: repo,
+        owner,
+        default_branch: branch,
+        token: token || null,
+        stars: repoData.stargazers_count || 0,
+        forks: repoData.forks_count || 0,
+        open_issues: repoData.open_issues_count || 0,
+        progress_percentage: aiAnalysis?.progressPercentage || 0,
+        velocity_status: aiAnalysis?.velocityStatus || "on_track",
+        ai_analysis: aiAnalysis,
+        latest_commits: formattedCommits,
+        latest_pulls: formattedPulls,
+        latest_issues: formattedIssues,
+        latest_contributors: formattedContributors,
+        last_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "project_id" });
+    } catch (dbErr) {
+      console.warn("project_github_integrations upsert notice:", dbErr);
+    }
+
+    // ── Also save in projects metadata as secondary persistence ─────────────
     const existingMeta = project?.metadata || {};
     const updatedMeta = {
       ...existingMeta,
@@ -211,7 +343,7 @@ Only return raw JSON without markdown code fences or conversational text.`;
         forks: repoData.forks_count,
         openIssues: repoData.open_issues_count,
         lastSyncedAt: new Date().toISOString(),
-        progressPercentage: aiAnalysis.progressPercentage,
+        progressPercentage: aiAnalysis?.progressPercentage || 0,
       },
     };
 
