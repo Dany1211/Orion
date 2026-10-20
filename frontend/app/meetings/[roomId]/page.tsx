@@ -17,46 +17,63 @@ function MeetingContainer() {
   const roleParam = searchParams.get("role") as "pm" | "client" | null;
   const { clientSession } = useClientPortal();
 
-  // Resolve role: explicit ?role= param wins, then clientSession, then default pm
-  const userRole = roleParam || (clientSession ? "client" : "pm");
+  // Initial role inference: query param wins, then client portal session, default to pm
+  const [userRole, setUserRole] = React.useState<"pm" | "client">(
+    roleParam || (clientSession ? "client" : "pm")
+  );
 
-  // ── Fetch real PM name from Supabase auth session ──
-  const [pmDisplayName, setPmDisplayName] = React.useState<string>("Project Manager");
+  // Dynamic user name
+  const [displayName, setDisplayName] = React.useState<string>(
+    roleParam === "client"
+      ? clientSession?.client_name || "Client Guest"
+      : "Project Manager"
+  );
 
   React.useEffect(() => {
-    if (userRole !== "pm") return;
     const supabase = createClient() as any;
+
     supabase.auth.getUser().then(({ data }: any) => {
       const u = data?.user;
-      if (!u) return;
-      // Try profile full_name first, then user_metadata, then email prefix
-      supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", u.id)
-        .single()
-        .then(({ data: profile }: any) => {
-          const name =
-            profile?.full_name ||
-            u.user_metadata?.full_name ||
-            u.user_metadata?.name ||
-            u.email?.split("@")[0] ||
-            "Project Manager";
-          setPmDisplayName(name);
-        });
+      if (u) {
+        // Logged-in Orion PM or team member
+        if (!roleParam && !clientSession) {
+          setUserRole("pm");
+        }
+        supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", u.id)
+          .single()
+          .then(({ data: profile }: any) => {
+            const name =
+              profile?.full_name ||
+              u.user_metadata?.full_name ||
+              u.user_metadata?.name ||
+              u.email?.split("@")[0] ||
+              "Project Manager";
+            if (!roleParam || roleParam === "pm") {
+              setDisplayName(name);
+            }
+          });
+      } else {
+        // No Supabase auth session: if no explicit role, treat as client guest
+        if (!roleParam && !clientSession) {
+          setUserRole("client");
+          setDisplayName("Client Guest");
+        }
+      }
     });
-  }, [userRole]);
 
-  const resolvedUserName =
-    userRole === "pm"
-      ? pmDisplayName
-      : clientSession?.client_name || "Client";
+    if (roleParam === "client" && clientSession?.client_name) {
+      setDisplayName(clientSession.client_name);
+    }
+  }, [roleParam, clientSession]);
 
   return (
     <VideoMeetingRoom
       roomId={roomId}
       userRole={userRole}
-      userName={resolvedUserName}
+      userName={displayName}
       onLeave={() => {
         if (userRole === "pm") {
           router.push("/dashboard/meetings");

@@ -163,7 +163,7 @@ export function ClientVisibilityControls({
       host_name: "Project Manager",
       client_attendee: clientName,
       agenda: "Real-time project alignment & milestone walkthrough.",
-      meeting_url: `/meetings/${roomId}`,
+      meeting_url: `/meetings/${roomId}?role=client`,
     });
 
     // 2. Send instant chat notification so client gets pinged in real-time
@@ -198,7 +198,7 @@ export function ClientVisibilityControls({
       host_name: "Project Manager",
       client_attendee: clientName,
       agenda: meetingAgenda || "Milestone reviews and technical roadmap alignment.",
-      meeting_url: `/meetings/${roomId}`,
+      meeting_url: `/meetings/${roomId}?role=client`,
     });
 
     // Send chat notification

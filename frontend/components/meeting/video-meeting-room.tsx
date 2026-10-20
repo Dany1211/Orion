@@ -70,9 +70,38 @@ export function VideoMeetingRoom({
     clientSession,
   } = useClientPortal();
 
-  // ── Resolve current meeting from DB or minimal fallback ──
+  // ── Directly fetch live meeting record from Supabase by room_id ──
+  const [dbMeeting, setDbMeeting] = React.useState<ClientMeeting | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    const supabase = createClient() as any;
+
+    supabase
+      .from("client_meetings")
+      .select("*")
+      .eq("room_id", roomId)
+      .maybeSingle()
+      .then(({ data, error }: any) => {
+        if (!error && data && active) {
+          setDbMeeting(data);
+          if (data.live_notes) setNotes(data.live_notes);
+          if (data.ai_summary) setAiSummary(data.ai_summary);
+          if (data.action_items) setActionItems(data.action_items);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [roomId]);
+
+  // ── Resolve current meeting from DB, props, or minimal fallback ──
   const currentMeeting = React.useMemo(() => {
-    const found = initialMeeting || meetings.find((m) => m.room_id === roomId || m.id === roomId);
+    const found =
+      dbMeeting ||
+      initialMeeting ||
+      meetings.find((m) => m.room_id === roomId || m.id === roomId);
     return (
       found || {
         id: roomId,
@@ -93,7 +122,7 @@ export function VideoMeetingRoom({
         updated_at: new Date().toISOString(),
       }
     );
-  }, [initialMeeting, meetings, roomId]);
+  }, [dbMeeting, initialMeeting, meetings, roomId]);
 
   // ── Dynamic display name from real session or prop ──
   const displayName = React.useMemo(() => {
@@ -144,32 +173,40 @@ export function VideoMeetingRoom({
   const remoteVideoRef = React.useRef<HTMLVideoElement>(null);
   const screenShareVideoRef = React.useRef<HTMLVideoElement>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
+  const remoteStreamRef = React.useRef<MediaStream | null>(null);
   const screenStreamRef = React.useRef<MediaStream | null>(null);
   const presenceChannelRef = React.useRef<any>(null);
   const peerConnectionRef = React.useRef<RTCPeerConnection | null>(null);
   const makingOfferRef = React.useRef(false);
   const iceCandidateBuffer = React.useRef<RTCIceCandidateInit[]>([]);
 
+  // ── Unique Peer Session ID (prevents collision if two clients or two PMs join) ──
+  const peerId = React.useMemo(
+    () => `${userRole}_${Math.random().toString(36).substring(2, 8)}_${Date.now()}`,
+    [userRole]
+  );
+  const displayNameRef = React.useRef(displayName);
+  displayNameRef.current = displayName;
+  const userRoleRef = React.useRef(userRole);
+  userRoleRef.current = userRole;
+
   // ── My participant record ──
   const myParticipant: RoomParticipant = React.useMemo(
     () => ({
-      id: `${userRole}-${Date.now()}`,
+      id: peerId,
       name: displayName,
       role: userRole,
       company: displayCompany,
       joined_at: new Date().toISOString(),
       mic_on: isMicOn,
     }),
-    [displayName, userRole, displayCompany, isMicOn]
+    [peerId, displayName, userRole, displayCompany, isMicOn]
   );
 
   // ── Supabase Realtime: Presence + Broadcast (chat + WebRTC signaling) ──
   React.useEffect(() => {
     let active = true;
     const supabase = createClient() as any;
-
-    // PM is the "impolite" peer — never rolls back on glare
-    const isPolite = userRole === "client";
 
     const RTC_CONFIG: RTCConfiguration = {
       iceServers: [
@@ -178,6 +215,7 @@ export function VideoMeetingRoom({
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
+        { urls: "stun:stun.cloudflare.com:3478" },
       ],
     };
 
@@ -201,19 +239,33 @@ export function VideoMeetingRoom({
 
       // Add local tracks if stream is already available
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) =>
-          pc.addTrack(t, localStreamRef.current!)
-        );
+        const senders = pc.getSenders();
+        localStreamRef.current.getTracks().forEach((t) => {
+          if (!senders.some((s) => s.track === t)) {
+            pc.addTrack(t, localStreamRef.current!);
+          }
+        });
       }
 
       // Remote stream arrives → show remote video
       pc.ontrack = (event) => {
         if (!active) return;
-        const [remoteStream] = event.streams;
-        if (remoteStream && remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-          setRemoteVideoActive(true);
+        let stream = event.streams && event.streams[0];
+        if (!stream) {
+          if (!remoteStreamRef.current) {
+            remoteStreamRef.current = new MediaStream();
+          }
+          remoteStreamRef.current.addTrack(event.track);
+          stream = remoteStreamRef.current;
+        } else {
+          remoteStreamRef.current = stream;
         }
+
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = stream;
+          remoteVideoRef.current.play().catch(() => {});
+        }
+        setRemoteVideoActive(true);
       };
 
       // ICE candidates → broadcast to peer
@@ -222,7 +274,7 @@ export function VideoMeetingRoom({
         presenceChannelRef.current?.send({
           type: "broadcast",
           event: "webrtc_ice",
-          payload: { candidate: event.candidate.toJSON(), from: userRole },
+          payload: { candidate: event.candidate.toJSON(), from: peerId, role: userRole },
         });
       };
 
@@ -243,7 +295,7 @@ export function VideoMeetingRoom({
           presenceChannelRef.current?.send({
             type: "broadcast",
             event: "webrtc_offer",
-            payload: { sdp: pc.localDescription, from: userRole },
+            payload: { sdp: pc.localDescription, from: peerId, role: userRole },
           });
         } catch (err) {
           console.warn("WebRTC negotiation error:", err);
@@ -256,7 +308,7 @@ export function VideoMeetingRoom({
     };
 
     const channel = supabase.channel(`meeting-room-${roomId}`, {
-      config: { presence: { key: `${userRole}-${roomId}` } },
+      config: { presence: { key: peerId } },
     });
 
     channel
@@ -267,7 +319,7 @@ export function VideoMeetingRoom({
         Object.values(presenceState).forEach((presences: any) => {
           if (Array.isArray(presences)) {
             presences.forEach((p: any) => {
-              if (p.role !== userRole) all.push(p as RoomParticipant);
+              if (p.id !== peerId) all.push(p as RoomParticipant);
             });
           }
         });
@@ -279,18 +331,22 @@ export function VideoMeetingRoom({
         if (!active) return;
         if (Array.isArray(newPresences)) {
           newPresences.forEach((p: any) => {
-            if (p.role !== userRole) {
+            if (p.id !== peerId) {
+              setParticipants((prev) => {
+                if (prev.some((x) => x.id === p.id)) return prev;
+                return [...prev, p as RoomParticipant];
+              });
               setChatMessages((prev) => [
                 ...prev,
                 {
-                  id: `join-${p.name}-${Date.now()}`,
+                  id: `join-${p.id}-${Date.now()}`,
                   sender: "System",
                   role: "system",
                   text: `${p.name} joined the meeting.`,
                   time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                 },
               ]);
-              // Remote just joined → create peer connection (tracks trigger onnegotiationneeded)
+              // Remote just joined → create peer connection
               ensurePC();
             }
           });
@@ -300,13 +356,19 @@ export function VideoMeetingRoom({
         if (!active) return;
         if (Array.isArray(leftPresences)) {
           leftPresences.forEach((p: any) => {
-            if (p.role !== userRole) {
+            if (p.id !== peerId) {
               setParticipants((prev) => prev.filter((x) => x.id !== p.id));
               setRemoteVideoActive(false);
+              if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = null;
+              }
+              remoteStreamRef.current = null;
+              peerConnectionRef.current?.close();
+              peerConnectionRef.current = null;
               setChatMessages((prev) => [
                 ...prev,
                 {
-                  id: `leave-${p.name}-${Date.now()}`,
+                  id: `leave-${p.id}-${Date.now()}`,
                   sender: "System",
                   role: "system",
                   text: `${p.name} left the meeting.`,
@@ -320,7 +382,7 @@ export function VideoMeetingRoom({
       // Live chat
       .on("broadcast", { event: "meeting_chat" }, (payload: any) => {
         if (!active) return;
-        if (payload.payload?.sender !== displayName) {
+        if (payload.payload?.sender !== displayNameRef.current) {
           setChatMessages((prev) => {
             if (prev.some((m) => m.id === payload.payload?.id)) return prev;
             return [...prev, payload.payload];
@@ -329,26 +391,34 @@ export function VideoMeetingRoom({
       })
       // ── WebRTC Signaling (Perfect Negotiation) ──
       .on("broadcast", { event: "webrtc_offer" }, async (payload: any) => {
-        if (!active || payload.payload?.from === userRole) return;
+        if (!active || payload.payload?.from === peerId) return;
         try {
           const pc = ensurePC();
+          const senderId = payload.payload?.from || "";
+          const senderRole = payload.payload?.role;
+          const isPolite =
+            userRole === "client" && senderRole === "pm"
+              ? true
+              : userRole === "pm" && senderRole === "client"
+              ? false
+              : peerId > senderId;
+
           const offerCollision = makingOfferRef.current || pc.signalingState !== "stable";
-          // Impolite peer (PM) simply ignores colliding offers
           if (!isPolite && offerCollision) return;
-          // Polite peer (client) rolls back its own offer to accept PM's
+
           if (isPolite && offerCollision) {
             await pc.setLocalDescription({ type: "rollback" } as RTCLocalSessionDescriptionInit);
             makingOfferRef.current = false;
           }
           await pc.setRemoteDescription(new RTCSessionDescription(payload.payload.sdp));
-          await flushIceCandidates(pc); // flush any early ICE candidates
+          await flushIceCandidates(pc);
           if (pc.signalingState === "have-remote-offer") {
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             presenceChannelRef.current?.send({
               type: "broadcast",
               event: "webrtc_answer",
-              payload: { sdp: pc.localDescription, from: userRole },
+              payload: { sdp: pc.localDescription, from: peerId, role: userRole },
             });
           }
         } catch (err) {
@@ -356,27 +426,25 @@ export function VideoMeetingRoom({
         }
       })
       .on("broadcast", { event: "webrtc_answer" }, async (payload: any) => {
-        if (!active || payload.payload?.from === userRole) return;
+        if (!active || payload.payload?.from === peerId) return;
         try {
           const pc = peerConnectionRef.current;
           if (pc && pc.signalingState === "have-local-offer") {
             await pc.setRemoteDescription(new RTCSessionDescription(payload.payload.sdp));
-            await flushIceCandidates(pc); // flush any early ICE candidates
+            await flushIceCandidates(pc);
           }
         } catch (err) {
           console.warn("WebRTC answer error:", err);
         }
       })
       .on("broadcast", { event: "webrtc_ice" }, async (payload: any) => {
-        if (!active || payload.payload?.from === userRole) return;
+        if (!active || payload.payload?.from === peerId) return;
         try {
           const pc = peerConnectionRef.current;
           if (pc && payload.payload?.candidate) {
             if (pc.remoteDescription) {
-              // Remote description already set — add immediately
               await pc.addIceCandidate(new RTCIceCandidate(payload.payload.candidate));
             } else {
-              // Remote description not set yet — buffer for later
               iceCandidateBuffer.current.push(payload.payload.candidate);
             }
           }
@@ -387,9 +455,9 @@ export function VideoMeetingRoom({
       .subscribe(async (status: string) => {
         if (status === "SUBSCRIBED" && active) {
           await channel.track({
-            id: myParticipant.id,
-            name: displayName,
-            role: userRole,
+            id: peerId,
+            name: displayNameRef.current,
+            role: userRoleRef.current,
             company: displayCompany,
             joined_at: new Date().toISOString(),
             mic_on: isMicOn,
@@ -406,15 +474,15 @@ export function VideoMeetingRoom({
       presenceChannelRef.current = null;
       peerConnectionRef.current?.close();
       peerConnectionRef.current = null;
+      remoteStreamRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, userRole, displayName]);
+  }, [roomId, peerId]);
 
-  // ── Broadcast mic state changes ──
+  // ── Broadcast mic state or display name changes ──
   React.useEffect(() => {
     if (presenceChannelRef.current) {
       presenceChannelRef.current.track({
-        id: myParticipant.id,
+        id: peerId,
         name: displayName,
         role: userRole,
         company: displayCompany,
@@ -422,8 +490,7 @@ export function VideoMeetingRoom({
         mic_on: isMicOn,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMicOn]);
+  }, [displayName, userRole, displayCompany, isMicOn, peerId, myParticipant.joined_at]);
 
   // ── Auto-scroll chat ──
   React.useEffect(() => {
@@ -442,12 +509,17 @@ export function VideoMeetingRoom({
             localStreamRef.current = stream;
             if (localVideoRef.current) {
               localVideoRef.current.srcObject = stream;
+              localVideoRef.current.play().catch(() => {});
             }
             // If peer connection already exists (remote joined first), add tracks now.
-            // This triggers onnegotiationneeded → offer is sent automatically.
             const pc = peerConnectionRef.current;
             if (pc) {
-              stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+              const senders = pc.getSenders();
+              stream.getTracks().forEach((t) => {
+                if (!senders.some((s) => s.track === t)) {
+                  pc.addTrack(t, stream);
+                }
+              });
             }
           }
         }
@@ -505,7 +577,9 @@ export function VideoMeetingRoom({
   };
 
   const copyRoomLink = () => {
-    const url = typeof window !== "undefined" ? `${window.location.origin}/meetings/${roomId}` : `/meetings/${roomId}`;
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const inviteRole = userRole === "pm" ? "client" : "pm";
+    const url = `${origin}/meetings/${roomId}?role=${inviteRole}`;
     navigator.clipboard.writeText(url);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2500);
@@ -825,10 +899,14 @@ export function VideoMeetingRoom({
                       </div>
                       <button
                         onClick={copyRoomLink}
-                        className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-medium text-zinc-300 transition-colors"
+                        className={`flex items-center gap-2 px-4 py-2 border rounded-xl text-xs font-medium transition-all ${
+                          isCopied
+                            ? "bg-emerald-600 border-emerald-500 text-white"
+                            : "bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300"
+                        }`}
                       >
-                        <Copy className="h-3.5 w-3.5" />
-                        <span>Copy Room Invite Link</span>
+                        {isCopied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{isCopied ? "Invite Link Copied!" : "Copy Room Invite Link"}</span>
                       </button>
                     </div>
                   )}

@@ -93,7 +93,7 @@ function MeetingsPageContent() {
 
   const copyMeetingInvite = (roomId: string) => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const url = `${origin}/meetings/${roomId}`;
+    const url = `${origin}/meetings/${roomId}?role=client`;
     navigator.clipboard.writeText(url);
     setCopiedRoomId(roomId);
     setTimeout(() => setCopiedRoomId(null), 2500);
