@@ -100,13 +100,49 @@ export function ClientMessagesHub({
   const previousMessageCountRef = React.useRef<number>(messages.length);
   const channelRef = React.useRef<any>(null);
 
+  const [pmIdentity, setPmIdentity] = React.useState<{ name: string; email: string }>({
+    name: "Project Lead",
+    email: "pm@orion.dev",
+  });
+
+  React.useEffect(() => {
+    async function resolvePmIdentity() {
+      try {
+        const supabase = createClient() as any;
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("full_name, email")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          const name =
+            profile?.full_name ||
+            user.user_metadata?.full_name ||
+            user.email?.split("@")[0] ||
+            "Project Lead";
+
+          const email = profile?.email || user.email || "pm@orion.dev";
+          setPmIdentity({ name, email });
+        }
+      } catch (err) {}
+    }
+
+    if (currentRole === "pm") {
+      resolvePmIdentity();
+    }
+  }, [currentRole]);
+
   const senderName =
     currentRole === "pm"
-      ? "Alex Rivera (Project Manager)"
-      : clientSession?.client_name || "Sarah Jenkins";
+      ? pmIdentity.name
+      : clientSession?.client_name || "Client Lead";
 
   const senderEmail =
-    currentRole === "pm" ? "alex@orion.ai" : clientSession?.client_email || "sarah.j@acmefintech.com";
+    currentRole === "pm"
+      ? pmIdentity.email
+      : clientSession?.client_email || "client@partner.com";
 
   // Filter messages
   const filteredMessages = messages.filter((m) => {
