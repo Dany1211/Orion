@@ -346,7 +346,7 @@ export function ClientMessagesHub({
                     >
                       {msg.sender_role === "pm" ? "Project Manager" : "Client"}
                     </span>
-                    <span className="text-[10px] text-zinc-400 font-medium">
+                    <span suppressHydrationWarning className="text-[10px] text-zinc-400 font-medium">
                       {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </span>
                   </div>

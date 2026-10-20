@@ -351,7 +351,7 @@ export default function ClientDashboardPage() {
                     </span>
                   </div>
                   {sprint.start_date && (
-                    <p className="text-[11px] text-zinc-400">
+                    <p suppressHydrationWarning className="text-[11px] text-zinc-400">
                       {new Date(sprint.start_date).toLocaleDateString()} - {sprint.end_date ? new Date(sprint.end_date).toLocaleDateString() : "Ongoing"}
                     </p>
                   )}
@@ -479,7 +479,7 @@ export default function ClientDashboardPage() {
                   >
                     <div className="flex items-center justify-between font-bold mb-1">
                       <span className="text-zinc-900">{msg.sender_name}</span>
-                      <span className="text-[10px] text-zinc-400 font-normal">
+                      <span suppressHydrationWarning className="text-[10px] text-zinc-400 font-normal">
                         {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                     </div>

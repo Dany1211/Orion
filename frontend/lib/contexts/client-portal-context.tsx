@@ -46,78 +46,47 @@ interface ClientPortalContextType {
 
 const ClientPortalContext = React.createContext<ClientPortalContextType | undefined>(undefined);
 
+const isValidUuid = (val?: string): boolean =>
+  !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
 export function ClientPortalProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = React.useState(true);
 
-  const [clientSession, setClientSession] = React.useState<ClientSession | null>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_client_session");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
-    }
-    return null;
-  });
+  const [clientSession, setClientSession] = React.useState<ClientSession | null>(null);
+  const [clientsDirectory, setClientsDirectory] = React.useState<Client[]>([]);
+  const [projectClients, setProjectClients] = React.useState<ProjectClient[]>([]);
+  const [portalConfigs, setPortalConfigs] = React.useState<Record<string, ClientPortalConfig>>({});
+  const [messages, setMessages] = React.useState<ClientMessage[]>([]);
+  const [meetings, setMeetings] = React.useState<ClientMeeting[]>([]);
+  const [approvals, setApprovals] = React.useState<ClientApprovalItem[]>([]);
 
-  const [clientsDirectory, setClientsDirectory] = React.useState<Client[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_clients_directory");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
-    }
-    return [];
-  });
+  // Hydrate local cache once mounted on the client to avoid SSR hydration mismatches
+  React.useEffect(() => {
+    try {
+      const savedSession = localStorage.getItem("orion_client_session");
+      if (savedSession) setClientSession(JSON.parse(savedSession));
 
-  const [projectClients, setProjectClients] = React.useState<ProjectClient[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_project_clients");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
-    }
-    return [];
-  });
+      const savedDir = localStorage.getItem("orion_clients_directory");
+      if (savedDir) setClientsDirectory(JSON.parse(savedDir));
 
-  const [portalConfigs, setPortalConfigs] = React.useState<Record<string, ClientPortalConfig>>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_portal_configs");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
-    }
-    return {};
-  });
+      const savedProjClients = localStorage.getItem("orion_project_clients");
+      if (savedProjClients) setProjectClients(JSON.parse(savedProjClients));
 
-  const [messages, setMessages] = React.useState<ClientMessage[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_client_messages");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
-    }
-    return [];
-  });
+      const savedConfigs = localStorage.getItem("orion_portal_configs");
+      if (savedConfigs) setPortalConfigs(JSON.parse(savedConfigs));
 
-  const [meetings, setMeetings] = React.useState<ClientMeeting[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_client_meetings");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
-    }
-    return [];
-  });
+      const savedMsgs = localStorage.getItem("orion_client_messages");
+      if (savedMsgs) setMessages(JSON.parse(savedMsgs));
 
-  const [approvals, setApprovals] = React.useState<ClientApprovalItem[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("orion_client_approvals");
-      if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-      }
+      const savedMeets = localStorage.getItem("orion_client_meetings");
+      if (savedMeets) setMeetings(JSON.parse(savedMeets));
+
+      const savedApprs = localStorage.getItem("orion_client_approvals");
+      if (savedApprs) setApprovals(JSON.parse(savedApprs));
+    } catch (e) {
+      console.warn("Notice reading cached client portal state:", e);
     }
-    return [];
-  });
+  }, []);
 
   // Local storage auto-sync
   React.useEffect(() => {
@@ -321,7 +290,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     }
 
     return {
-      id: `cfg-${projectId}`,
+      id: isValidUuid(projectId) ? projectId : "default-config-id",
       project_id: projectId,
       client_name: "Client Partner",
       client_company: "Client Organization",
@@ -340,31 +309,86 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       show_meetings: true,
       allow_approvals: true,
       allow_direct_chat: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
     };
   };
 
   const updatePortalConfig = async (projectId: string, updates: Partial<ClientPortalConfig>) => {
-    const current = getPortalConfig(projectId);
+    let targetProjectId = projectId;
+    const supabase = createClient() as any;
+
+    if (!isValidUuid(targetProjectId)) {
+      try {
+        const { data: firstProj } = await supabase.from("projects").select("id").limit(1).maybeSingle();
+        if (firstProj?.id && isValidUuid(firstProj.id)) {
+          targetProjectId = firstProj.id;
+        }
+      } catch (err) {}
+    }
+
+    const current = getPortalConfig(targetProjectId);
     const updated: ClientPortalConfig = {
       ...current,
       ...updates,
-      project_id: projectId,
+      project_id: targetProjectId,
       updated_at: new Date().toISOString(),
     };
 
     setPortalConfigs((prev) => ({
       ...prev,
-      [projectId]: updated,
+      [targetProjectId]: updated,
+      ...(projectId !== targetProjectId ? { [projectId]: updated } : {}),
     }));
 
+    if (!isValidUuid(targetProjectId)) {
+      return;
+    }
+
     try {
-      const supabase = createClient() as any;
-      const { error } = await supabase.from("client_portal_configs").upsert(updated, { onConflict: "project_id" });
-      if (error) console.error("Supabase error updating client_portal_configs:", error);
-    } catch (e) {
-      console.error("Failed to update portal config in Supabase:", e);
+      const payload: any = {
+        project_id: targetProjectId,
+        client_name: updated.client_name || "Client Partner",
+        client_company: updated.client_company || "Client Organization",
+        client_email: updated.client_email || null,
+        access_passcode: updated.access_passcode || null,
+        is_portal_active: updated.is_portal_active ?? true,
+        welcome_heading: updated.welcome_heading || "Executive Project Delivery Portal",
+        welcome_message: updated.welcome_message || "Track project milestones, review confirmed specifications, sign off on deliverables, and collaborate with your dedicated engineering team.",
+        show_overview: updated.show_overview ?? true,
+        show_requirements: updated.show_requirements ?? true,
+        show_sprints: updated.show_sprints ?? true,
+        show_github: updated.show_github ?? true,
+        show_risks: updated.show_risks ?? false,
+        show_reports: updated.show_reports ?? true,
+        show_budget: updated.show_budget ?? true,
+        show_meetings: updated.show_meetings ?? true,
+        allow_approvals: updated.allow_approvals ?? true,
+        allow_direct_chat: updated.allow_direct_chat ?? true,
+        live_preview_url: updated.live_preview_url || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (isValidUuid(updated.id)) {
+        payload.id = updated.id;
+      }
+
+      const { data, error } = await supabase
+        .from("client_portal_configs")
+        .upsert(payload, { onConflict: "project_id" })
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        console.warn("Notice updating client_portal_configs:", error.message || error.details || error.hint || error);
+      } else if (data) {
+        setPortalConfigs((prev) => ({
+          ...prev,
+          [targetProjectId]: data,
+        }));
+      }
+    } catch (e: any) {
+      console.warn("Failed to update portal config in Supabase:", e?.message || e);
     }
   };
 

@@ -489,7 +489,7 @@ function MeetingsPageContent() {
                     <div className="p-3 rounded-2xl bg-zinc-50 border border-zinc-100 grid grid-cols-2 gap-2 text-xs">
                       <div>
                         <span className="text-zinc-400 block text-[10px] font-bold uppercase">Scheduled Time</span>
-                        <span className="font-semibold text-zinc-800">
+                        <span suppressHydrationWarning className="font-semibold text-zinc-800">
                           {new Date(m.scheduled_at).toLocaleString([], {
                             month: "short",
                             day: "numeric",
@@ -557,7 +557,7 @@ function MeetingsPageContent() {
                       <div>
                         <h4 className="text-sm font-bold text-zinc-900">{m.title}</h4>
                         <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
-                          <span>
+                          <span suppressHydrationWarning>
                             Conducted on:{" "}
                             {new Date(m.scheduled_at).toLocaleDateString([], {
                               month: "short",

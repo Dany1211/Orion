@@ -233,7 +233,7 @@ export default function ClientMeetingsPage() {
                       <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 flex items-center gap-1.5">
                         <Calendar className="h-3 w-3" /> Scheduled
                       </span>
-                      <span className="text-[11px] text-zinc-500 font-medium">
+                      <span suppressHydrationWarning className="text-[11px] text-zinc-500 font-medium">
                         {new Date(m.scheduled_at).toLocaleString([], {
                           month: "short",
                           day: "numeric",
@@ -290,7 +290,7 @@ export default function ClientMeetingsPage() {
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                       <h4 className="text-sm font-bold text-zinc-900">{m.title}</h4>
-                      <span className="text-[11px] text-zinc-400">
+                      <span suppressHydrationWarning className="text-[11px] text-zinc-400">
                         ({new Date(m.scheduled_at).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })})
                       </span>
                     </div>
