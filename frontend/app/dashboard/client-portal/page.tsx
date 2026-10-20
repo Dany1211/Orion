@@ -25,10 +25,18 @@ function ClientPortalManagerContent() {
   const [selectedProjectId, setSelectedProjectId] = React.useState<string>(activeProjectId || "default");
   const [showPreviewModal, setShowPreviewModal] = React.useState(false);
 
+  React.useEffect(() => {
+    if (activeProjectId && activeProjectId !== "default") {
+      setSelectedProjectId(activeProjectId);
+    } else if (projects.length > 0 && (selectedProjectId === "default" || !projects.some((p) => p.id === selectedProjectId))) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [activeProjectId, projects, selectedProjectId]);
+
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || {
-    id: "default",
-    title: "FinTech Mobile Gateway",
-    description: "Enterprise mobile banking platform with biometric auth and real-time ledger.",
+    id: selectedProjectId,
+    title: projects[0]?.title || projects[0]?.name || "Active Project",
+    description: projects[0]?.description || "Project workspace and client governance.",
   };
 
   return (

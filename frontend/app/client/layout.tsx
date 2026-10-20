@@ -124,7 +124,7 @@ function ClientPortalShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             {liveMeeting && (
               <Link
-                href={`/meetings/${liveMeeting.room_id}`}
+                href={`/meetings/${liveMeeting.room_id}?role=client`}
                 className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm shadow-indigo-600/20"
               >
                 <Video className="h-3.5 w-3.5" />

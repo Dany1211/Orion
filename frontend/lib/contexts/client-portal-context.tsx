@@ -37,6 +37,8 @@ interface ClientPortalContextType {
   approvals: ClientApprovalItem[];
   submitApprovalDecision: (approvalId: string, status: "approved" | "revision_requested", feedback?: string) => Promise<void>;
   requestApproval: (item: Omit<ClientApprovalItem, "id" | "created_at" | "status">) => Promise<ClientApprovalItem>;
+  deleteMeeting: (meetingId: string) => Promise<void>;
+  deleteClient: (clientId: string, clientEmail?: string) => Promise<void>;
   logoutClient: () => void;
   refreshData: () => Promise<void>;
   isLoading: boolean;
@@ -422,7 +424,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
   ): Promise<ProjectClient> => {
     const cleanEmail = clientData.email.toLowerCase().trim();
 
-    // 1. Ensure master client record is created in `clients` table
+    // 1. Ensure master client record is created/updated in `clients` table
     const clientRecord = await createClientInDatabase({
       name: clientData.name,
       email: cleanEmail,
@@ -430,9 +432,23 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       passcode: clientData.passcode,
     });
 
+    let targetProjectId = projectId;
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
+
+    const supabase = createClient() as any;
+
+    if (!isUUID) {
+      try {
+        const { data: firstProj } = await supabase.from("projects").select("id").limit(1).maybeSingle();
+        if (firstProj?.id) {
+          targetProjectId = firstProj.id;
+        }
+      } catch (err) {}
+    }
+
     let assignedRow: ProjectClient = {
       id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `pcl-${Date.now()}`,
-      project_id: projectId,
+      project_id: targetProjectId,
       client_id: clientRecord.id,
       client_name: clientData.name,
       client_email: cleanEmail,
@@ -445,9 +461,8 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
     // 2. Insert into `project_clients` table
     try {
-      const supabase = createClient() as any;
       const payload: any = {
-        project_id: projectId,
+        project_id: targetProjectId,
         client_name: clientData.name,
         client_email: cleanEmail,
         client_company: clientData.company || "Client Organization",
@@ -477,10 +492,10 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
     setProjectClients((prev) => [
       assignedRow,
-      ...prev.filter((c) => !(c.project_id === projectId && c.client_email === cleanEmail)),
+      ...prev.filter((c) => !(c.project_id === targetProjectId && c.client_email === cleanEmail)),
     ]);
 
-    await updatePortalConfig(projectId, {
+    await updatePortalConfig(targetProjectId, {
       client_name: clientData.name,
       client_email: cleanEmail,
       client_company: clientData.company || "Client Organization",
@@ -496,10 +511,46 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
 
     try {
       const supabase = createClient() as any;
-      const { error } = await supabase.from("project_clients").delete().eq("project_id", projectId).eq("client_email", cleanEmail);
-      if (error) console.error("Supabase error deleting project_client:", error);
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
+      if (isUUID) {
+        const { error } = await supabase.from("project_clients").delete().eq("project_id", projectId).eq("client_email", cleanEmail);
+        if (error) console.error("Supabase error deleting project_client:", error);
+      } else {
+        const { error } = await supabase.from("project_clients").delete().eq("client_email", cleanEmail);
+        if (error) console.error("Supabase error deleting project_client:", error);
+      }
     } catch (e) {
       console.error("Failed to delete project_client from Supabase:", e);
+    }
+  };
+
+  const deleteClient = async (clientId: string, clientEmail?: string) => {
+    setClientsDirectory((prev) => prev.filter((c) => c.id !== clientId));
+    if (clientEmail) {
+      const cleanEmail = clientEmail.toLowerCase().trim();
+      setProjectClients((prev) => prev.filter((c) => c.client_email !== cleanEmail));
+    }
+
+    try {
+      const supabase = createClient() as any;
+      if (clientId && !clientId.startsWith("c-")) {
+        await supabase.from("clients").delete().eq("id", clientId);
+      }
+      if (clientEmail) {
+        await supabase.from("project_clients").delete().eq("client_email", clientEmail.toLowerCase().trim());
+      }
+    } catch (e) {
+      console.error("Failed to delete client from database:", e);
+    }
+  };
+
+  const deleteMeeting = async (meetingId: string) => {
+    setMeetings((prev) => prev.filter((m) => m.id !== meetingId && m.room_id !== meetingId));
+    try {
+      const supabase = createClient() as any;
+      await supabase.from("client_meetings").delete().or(`id.eq.${meetingId},room_id.eq.${meetingId}`);
+    } catch (e) {
+      console.error("Failed to delete meeting from database:", e);
     }
   };
 
@@ -944,6 +995,8 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         approvals,
         submitApprovalDecision,
         requestApproval,
+        deleteMeeting,
+        deleteClient,
         logoutClient,
         refreshData: loadDatabaseData,
         isLoading,

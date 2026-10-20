@@ -184,7 +184,7 @@ export default function ClientDashboardPage() {
           <div className="flex flex-col sm:flex-row md:flex-col gap-2.5 flex-shrink-0">
             {config.show_meetings && upcomingMeeting && (
               <Link
-                href={`/meetings/${upcomingMeeting.room_id}`}
+                href={`/meetings/${upcomingMeeting.room_id}?role=client`}
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/25"
               >
                 <Video className="h-4 w-4" />
@@ -421,7 +421,7 @@ export default function ClientDashboardPage() {
                   )}
                 </div>
                 <Link
-                  href={`/meetings/${upcomingMeeting.room_id}`}
+                  href={`/meetings/${upcomingMeeting.room_id}?role=client`}
                   className="w-full py-2.5 bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-500/30"
                 >
                   <Video className="h-4 w-4" />
