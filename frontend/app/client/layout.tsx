@@ -37,7 +37,7 @@ function ClientPortalShell({ children }: { children: React.ReactNode }) {
   const liveMeeting = projectMeetings.find((m) => m.status === "live" || m.status === "scheduled");
 
   const navItems = [
-    { label: "Dashboard", href: "/client", icon: LayoutDashboard },
+    { label: "Projects & Workspace", href: "/client", icon: FolderKanban },
     { label: "Messages", href: "/client/messages", icon: MessageSquare },
     {
       label: "Meetings",

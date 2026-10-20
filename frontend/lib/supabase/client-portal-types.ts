@@ -110,6 +110,11 @@ export interface ClientProjectRef {
   id: string;
   name: string;
   description?: string;
+  domain?: string;
+  status?: string;
+  tech_stack?: string[];
+  team_size?: number;
+  metadata?: any;
 }
 
 export interface ClientSession {

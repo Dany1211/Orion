@@ -595,7 +595,7 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       // 1. Fetch from project_clients table
       const { data: assignments, error: assignErr } = await supabase
         .from("project_clients")
-        .select("*, projects(id, name, title, description)")
+        .select("*, projects(id, name, title, description, domain, status, tech_stack, team_size, metadata)")
         .eq("client_email", cleanEmail)
         .eq("passcode", cleanPass)
         .eq("is_active", true);
@@ -605,6 +605,11 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
           id: a.project_id,
           name: a.projects?.name || a.projects?.title || a.client_company || "Assigned Project",
           description: a.projects?.description,
+          domain: a.projects?.domain,
+          status: a.projects?.status,
+          tech_stack: a.projects?.tech_stack,
+          team_size: a.projects?.team_size,
+          metadata: a.projects?.metadata,
         }));
 
         const primary = assignments[0];
