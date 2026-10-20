@@ -212,7 +212,9 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
     }
   };
 
-  // Real-time Supabase replication subscription
+  // Real-time Supabase replication & broadcast subscription
+  const activeChannelRef = React.useRef<any>(null);
+
   React.useEffect(() => {
     loadDatabaseData();
 
@@ -231,6 +233,18 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
               });
             } else if (payload.eventType === "UPDATE") {
               setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? payload.new : m)));
+            }
+          }
+        )
+        .on(
+          "broadcast",
+          { event: "client_message" },
+          (payload: any) => {
+            if (payload.payload?.id) {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === payload.payload.id)) return prev;
+                return [...prev, payload.payload];
+              });
             }
           }
         )
@@ -290,7 +304,10 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
         )
         .subscribe();
 
+      activeChannelRef.current = channel;
+
       return () => {
+        activeChannelRef.current = null;
         supabase.removeChannel(channel);
       };
     } catch (e) {}
@@ -708,7 +725,20 @@ export function ClientPortalProvider({ children }: { children: React.ReactNode }
       console.error("Failed to send message to database:", e);
     }
 
-    setMessages((prev) => [...prev, newMsg]);
+    try {
+      if (activeChannelRef.current) {
+        activeChannelRef.current.send({
+          type: "broadcast",
+          event: "client_message",
+          payload: newMsg,
+        });
+      }
+    } catch (err) {}
+
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === newMsg.id)) return prev;
+      return [...prev, newMsg];
+    });
     return newMsg;
   };
 

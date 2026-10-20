@@ -17,9 +17,12 @@ import {
   ArrowDownCircle,
   Download,
   CheckCircle2,
+  Circle,
+  Radio,
 } from "lucide-react";
 import { useClientPortal } from "@/lib/contexts/client-portal-context";
 import { ClientMessage, MessageRole } from "@/lib/supabase/client-portal-types";
+import { createClient } from "@/lib/supabase/client";
 
 interface ClientMessagesHubProps {
   currentRole: "pm" | "client";
@@ -39,8 +42,8 @@ const TOPICS = [
 const PM_TEMPLATES = [
   "Milestone is ready for your executive review & sign-off.",
   "We have updated the SRS Specification document with your feedback.",
-  "Staging environment has been updated with the latest biometric auth build.",
-  "Let's jump on a quick 15-minute video sync to align on upcoming deliverables.",
+  "Staging environment has been updated with the latest build.",
+  "Let's jump on a quick video sync to align on upcoming deliverables.",
 ];
 
 const CLIENT_TEMPLATES = [
@@ -49,6 +52,33 @@ const CLIENT_TEMPLATES = [
   "We have signed off on the milestone approval request.",
   "Could we schedule a follow-up video sync this afternoon?",
 ];
+
+// Helper to synthesize gentle notification chime tone
+function playMessageNotificationChime() {
+  if (typeof window === "undefined") return;
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12); // A5
+
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.36);
+  } catch (e) {
+    // AudioContext blocked by browser autoplay policy if user hasn't interacted
+  }
+}
 
 export function ClientMessagesHub({
   currentRole,
@@ -62,8 +92,13 @@ export function ClientMessagesHub({
   const [activeTopicForNewMsg, setActiveTopicForNewMsg] = React.useState("General");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [attachmentName, setAttachmentName] = React.useState<string | null>(null);
+  const [typingPartner, setTypingPartner] = React.useState<string | null>(null);
+  const [isConnected, setIsConnected] = React.useState(true);
 
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const previousMessageCountRef = React.useRef<number>(messages.length);
+  const channelRef = React.useRef<any>(null);
 
   const senderName =
     currentRole === "pm"
@@ -87,13 +122,97 @@ export function ClientMessagesHub({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // Listen for realtime typing indicators
+  React.useEffect(() => {
+    try {
+      const supabase = createClient() as any;
+      const channel = supabase.channel(`orion-chat-presence-${projectId}`);
+
+      channel
+        .on("broadcast", { event: "typing_start" }, (payload: any) => {
+          if (payload.payload?.sender_role !== currentRole) {
+            setTypingPartner(payload.payload?.sender_name || "Partner");
+          }
+        })
+        .on("broadcast", { event: "typing_stop" }, (payload: any) => {
+          if (payload.payload?.sender_role !== currentRole) {
+            setTypingPartner(null);
+          }
+        })
+        .subscribe((status: string) => {
+          if (status === "SUBSCRIBED") {
+            setIsConnected(true);
+          }
+        });
+
+      channelRef.current = channel;
+
+      return () => {
+        supabase.removeChannel(channel);
+        channelRef.current = null;
+      };
+    } catch (e) {
+      console.warn("Realtime chat channel initialized in standard mode");
+    }
+  }, [projectId, currentRole]);
+
+  // Audio chime & auto-scroll on new incoming message
   React.useEffect(() => {
     scrollToBottom();
-  }, [messages, selectedTopic]);
+
+    if (messages.length > previousMessageCountRef.current) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg && lastMsg.sender_role !== currentRole) {
+        playMessageNotificationChime();
+        setTypingPartner(null);
+      }
+    }
+    previousMessageCountRef.current = messages.length;
+  }, [messages, selectedTopic, currentRole]);
+
+  // Handle typing broadcast
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputText(e.target.value);
+
+    try {
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "typing_start",
+          payload: { sender_name: senderName, sender_role: currentRole },
+        });
+
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+          channelRef.current?.send({
+            type: "broadcast",
+            event: "typing_stop",
+            payload: { sender_role: currentRole },
+          });
+        }, 1800);
+      }
+    } catch (err) {}
+  };
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputText.trim() && !attachmentName) return;
+
+    // Stop typing broadcast
+    try {
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "typing_stop",
+          payload: { sender_role: currentRole },
+        });
+      }
+    } catch (err) {}
+
+    const text = inputText.trim();
+    setInputText("");
+    const att = attachmentName;
+    setAttachmentName(null);
 
     await sendMessage({
       project_id: projectId,
@@ -104,15 +223,12 @@ export function ClientMessagesHub({
         currentRole === "pm"
           ? "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces"
           : clientSession?.avatar_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100&h=100&fit=crop&crop=faces",
-      content: inputText.trim(),
+      content: text,
       topic: activeTopicForNewMsg,
-      attachment_name: attachmentName || undefined,
-      attachment_type: attachmentName ? "pdf" : undefined,
+      attachment_name: att || undefined,
+      attachment_type: att ? "pdf" : undefined,
       read_by_recipient: false,
     });
-
-    setInputText("");
-    setAttachmentName(null);
   };
 
   const handleUseTemplate = (tmpl: string) => {
@@ -127,18 +243,26 @@ export function ClientMessagesHub({
     <div className="bg-white rounded-2xl border border-zinc-100 shadow-sm flex flex-col h-[750px] overflow-hidden">
       {/* ── Top Header ── */}
       <div className="px-6 py-4 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-zinc-50/50">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="h-8 w-8 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center">
-              <MessageSquare className="h-4 w-4" />
-            </span>
-            <h2 className="text-base font-black text-zinc-900">
-              {currentRole === "pm" ? "Client Communication Hub" : "Project Manager Direct Hub"}
-            </h2>
+        <div className="flex items-center gap-3">
+          <span className="h-9 w-9 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center">
+            <MessageSquare className="h-4 w-4" />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-black text-zinc-900">
+                {currentRole === "pm" ? "Client Communication Hub" : "Project Manager Direct Hub"}
+              </h2>
+              {isConnected && (
+                <span className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+                  Real-Time Live
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-zinc-500 font-medium mt-0.5">
+              Direct collaboration & deliverable alignment for <span className="font-semibold text-zinc-700">{projectName}</span>
+            </p>
           </div>
-          <p className="text-xs text-zinc-500 font-medium mt-0.5">
-            Real-time direct collaboration & threaded deliverables discussion for <span className="font-semibold text-zinc-700">{projectName}</span>
-          </p>
         </div>
 
         {/* Search */}
@@ -194,7 +318,7 @@ export function ClientMessagesHub({
             return (
               <motion.div
                 key={msg.id}
-                initial={{ opacity: 0, y: 10 }}
+                initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={`flex gap-3 max-w-2xl ${isMe ? "ml-auto flex-row-reverse" : "mr-auto"}`}
               >
@@ -273,7 +397,7 @@ export function ClientMessagesHub({
                   {isMe && (
                     <div className="flex items-center justify-end gap-1 text-[10px] text-zinc-400 pr-1">
                       <CheckCheck className="h-3 w-3 text-indigo-600" />
-                      <span>Delivered</span>
+                      <span>Delivered in Real-Time</span>
                     </div>
                   )}
                 </div>
@@ -281,6 +405,24 @@ export function ClientMessagesHub({
             );
           })
         )}
+
+        {/* Real-time Typing Indicator Bubble */}
+        {typingPartner && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center gap-2 text-xs text-zinc-500 pl-2"
+          >
+            <span className="text-[11px] font-semibold text-indigo-600">{typingPartner} is typing</span>
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: "300ms" }} />
+            </span>
+          </motion.div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -336,7 +478,7 @@ export function ClientMessagesHub({
           <div className="flex-1 relative">
             <textarea
               value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -371,3 +513,4 @@ export function ClientMessagesHub({
     </div>
   );
 }
+
