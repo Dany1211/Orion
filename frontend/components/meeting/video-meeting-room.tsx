@@ -148,6 +148,7 @@ export function VideoMeetingRoom({
   const presenceChannelRef = React.useRef<any>(null);
   const peerConnectionRef = React.useRef<RTCPeerConnection | null>(null);
   const makingOfferRef = React.useRef(false);
+  const iceCandidateBuffer = React.useRef<RTCIceCandidateInit[]>([]);
 
   // ── My participant record ──
   const myParticipant: RoomParticipant = React.useMemo(
@@ -174,7 +175,22 @@ export function VideoMeetingRoom({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
       ],
+    };
+
+    // ── Flush any buffered ICE candidates into the PC ──
+    const flushIceCandidates = async (pc: RTCPeerConnection) => {
+      while (iceCandidateBuffer.current.length > 0) {
+        const candidate = iceCandidateBuffer.current.shift()!;
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch {
+          // Stale candidate after flush — safe to ignore
+        }
+      }
     };
 
     // ── Create RTCPeerConnection (idempotent) ──
@@ -325,6 +341,7 @@ export function VideoMeetingRoom({
             makingOfferRef.current = false;
           }
           await pc.setRemoteDescription(new RTCSessionDescription(payload.payload.sdp));
+          await flushIceCandidates(pc); // flush any early ICE candidates
           if (pc.signalingState === "have-remote-offer") {
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -344,6 +361,7 @@ export function VideoMeetingRoom({
           const pc = peerConnectionRef.current;
           if (pc && pc.signalingState === "have-local-offer") {
             await pc.setRemoteDescription(new RTCSessionDescription(payload.payload.sdp));
+            await flushIceCandidates(pc); // flush any early ICE candidates
           }
         } catch (err) {
           console.warn("WebRTC answer error:", err);
@@ -354,7 +372,13 @@ export function VideoMeetingRoom({
         try {
           const pc = peerConnectionRef.current;
           if (pc && payload.payload?.candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(payload.payload.candidate));
+            if (pc.remoteDescription) {
+              // Remote description already set — add immediately
+              await pc.addIceCandidate(new RTCIceCandidate(payload.payload.candidate));
+            } else {
+              // Remote description not set yet — buffer for later
+              iceCandidateBuffer.current.push(payload.payload.candidate);
+            }
           }
         } catch {
           // Stale ICE candidates are benign
