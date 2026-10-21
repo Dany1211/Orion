@@ -4,14 +4,14 @@ import * as React from "react";
 import { createClient } from "@/lib/supabase/client";
 
 export interface TranscriptSegment {
-  id?: string;
+  id: string;
   speaker_name: string;
   speaker_role: "pm" | "client" | "system";
   text: string;
   confidence: number;
   started_at: string;
   segment_index: number;
-  isPending?: boolean; // not yet flushed to DB
+  isPending?: boolean;
 }
 
 interface UseTranscriptOptions {
@@ -25,17 +25,22 @@ interface UseTranscriptOptions {
 
 interface UseTranscriptReturn {
   segments: TranscriptSegment[];
+  interimText: string;
   isTranscribing: boolean;
   isSupported: boolean;
+  error: string | null;
   startTranscription: () => void;
   stopTranscription: () => void;
   consolidateToSource: () => Promise<string | null>;
   fullTranscript: string;
   wordCount: number;
+  clearTranscript: () => void;
 }
 
-const FLUSH_INTERVAL_MS = 5000;   // flush pending segment every 5s of silence
-const MIN_WORDS_TO_FLUSH = 4;     // don't flush tiny fragments
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(val: any): boolean {
+  return typeof val === "string" && UUID_REGEX.test(val);
+}
 
 export function useMeetingTranscript({
   meetingId,
@@ -45,94 +50,129 @@ export function useMeetingTranscript({
   speakerRole,
   enabled = true,
 }: UseTranscriptOptions): UseTranscriptReturn {
-  const [segments, setSegments] = React.useState<TranscriptSegment[]>([]);
-  const [isTranscribing, setIsTranscribing] = React.useState(false);
-  const [isSupported] = React.useState(
+  // ── States ────────────────────────────────────────────────────────────────
+  const [segments, setSegments] = React.useState<TranscriptSegment[]>(() => {
+    // Restore from session storage if available
+    if (typeof window !== "undefined" && roomId) {
+      try {
+        const cached = sessionStorage.getItem(`orion_transcript_${roomId}`);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
+
+  const [interimText, setInterimText] = React.useState<string>("");
+  const [isTranscribing, setIsTranscribing] = React.useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+
+  const [isSupported] = React.useState<boolean>(
     typeof window !== "undefined" &&
-    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
+      ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
   );
 
+  // ── Stable refs to prevent closure stale state ────────────────────────────
   const recognitionRef = React.useRef<any>(null);
-  const segmentIndexRef = React.useRef(0);
-  const pendingTextRef = React.useRef("");
-  const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTranscribingRef = React.useRef(false);
-  const liveSegmentRef = React.useRef<TranscriptSegment | null>(null);
+  const isTranscribingRef = React.useRef<boolean>(false);
+  const segmentIndexRef = React.useRef<number>(segments.length);
+  const restartTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Flush a completed segment to Supabase ────────────────────────────────
-  const flushSegment = React.useCallback(async (text: string, confidence: number) => {
-    const trimmed = text.trim();
-    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const optionsRef = React.useRef({
+    meetingId,
+    projectId,
+    roomId,
+    speakerName,
+    speakerRole,
+    enabled,
+  });
 
-    if (!trimmed || wordCount < MIN_WORDS_TO_FLUSH) return;
-    if (!meetingId || !projectId) {
-      // No meeting ID yet — store locally only
-      const seg: TranscriptSegment = {
-        speaker_name: speakerName,
-        speaker_role: speakerRole,
-        text: trimmed,
-        confidence,
-        started_at: new Date().toISOString(),
-        segment_index: segmentIndexRef.current++,
-        isPending: true,
-      };
-      setSegments(prev => [...prev, seg]);
+  React.useEffect(() => {
+    optionsRef.current = {
+      meetingId,
+      projectId,
+      roomId,
+      speakerName,
+      speakerRole,
+      enabled,
+    };
+  }, [meetingId, projectId, roomId, speakerName, speakerRole, enabled]);
+
+  // Persist segments to sessionStorage for instant recovery
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && roomId && segments.length > 0) {
+      try {
+        sessionStorage.setItem(`orion_transcript_${roomId}`, JSON.stringify(segments));
+      } catch {}
+    }
+  }, [segments, roomId]);
+
+  // ── Save segment to Supabase (non-blocking) ──────────────────────────────
+  const persistSegmentToDb = React.useCallback(
+    async (seg: TranscriptSegment) => {
+      const { meetingId: mId, projectId: pId, roomId: rId } = optionsRef.current;
+      const validMeetingId = isUuid(mId) ? mId : null;
+      const validProjectId = isUuid(pId) ? pId : null;
+
+      try {
+        const supabase = createClient() as any;
+        const insertPayload: Record<string, any> = {
+          room_id: rId,
+          speaker_name: seg.speaker_name,
+          speaker_role: seg.speaker_role,
+          text: seg.text,
+          confidence: seg.confidence,
+          segment_index: seg.segment_index,
+          started_at: seg.started_at,
+        };
+
+        if (validMeetingId) insertPayload.meeting_id = validMeetingId;
+        if (validProjectId) insertPayload.project_id = validProjectId;
+
+        const { data, error } = await supabase
+          .from("meeting_transcript_segments")
+          .insert(insertPayload)
+          .select("id")
+          .maybeSingle();
+
+        if (!error && data?.id) {
+          setSegments((prev) =>
+            prev.map((s) => (s.id === seg.id ? { ...s, id: data.id, isPending: false } : s))
+          );
+        }
+      } catch (err) {
+        // Non-blocking — transcript remains safe in React state & sessionStorage
+        console.warn("[Transcript] Supabase background sync notice:", err);
+      }
+    },
+    []
+  );
+
+  // ── Start Web Speech Recognition ──────────────────────────────────────────
+  const startTranscription = React.useCallback(() => {
+    if (!isSupported) {
+      setErrorMessage("Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.");
       return;
     }
 
-    const idx = segmentIndexRef.current++;
-    const seg: TranscriptSegment = {
-      speaker_name: speakerName,
-      speaker_role: speakerRole,
-      text: trimmed,
-      confidence,
-      started_at: new Date().toISOString(),
-      segment_index: idx,
-      isPending: false,
-    };
-
-    // Optimistic UI
-    setSegments(prev => [...prev, seg]);
-
-    // Persist to Supabase
-    try {
-      const supabase = createClient() as any;
-      const { data, error } = await supabase
-        .from("meeting_transcript_segments")
-        .insert({
-          meeting_id:    meetingId,
-          project_id:    projectId,
-          room_id:       roomId,
-          speaker_name:  speakerName,
-          speaker_role:  speakerRole,
-          text:          trimmed,
-          confidence:    confidence,
-          segment_index: idx,
-          started_at:    seg.started_at,
-        })
-        .select("id")
-        .single();
-
-      if (!error && data?.id) {
-        // Update the segment with its real DB id
-        setSegments(prev =>
-          prev.map(s =>
-            s.segment_index === idx ? { ...s, id: data.id, isPending: false } : s
-          )
-        );
-      }
-    } catch (err) {
-      console.warn("[Transcript] Supabase flush error:", err);
-    }
-  }, [meetingId, projectId, roomId, speakerName, speakerRole]);
-
-  // ── Start Web Speech recognition ─────────────────────────────────────────
-  const startTranscription = React.useCallback(() => {
-    if (!isSupported || !enabled) return;
     if (isTranscribingRef.current) return;
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) return;
+
+    let recognition: any;
+    try {
+      recognition = new SpeechRecognition();
+    } catch (e) {
+      console.warn("[Transcript] Could not construct SpeechRecognition:", e);
+      return;
+    }
 
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -140,92 +180,86 @@ export function useMeetingTranscript({
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
-      setIsTranscribing(true);
       isTranscribingRef.current = true;
-    };
-
-    recognition.onerror = (event: any) => {
-      if (event.error === "no-speech" || event.error === "aborted") return;
-      if (event.error === "network") {
-        console.warn("[Transcript] Network error — retrying in 2s");
-        setTimeout(() => {
-          if (isTranscribingRef.current) recognition.start();
-        }, 2000);
-        return;
-      }
-      console.warn("[Transcript] Speech error:", event.error);
-    };
-
-    recognition.onend = () => {
-      // Auto-restart for continuous transcription
-      if (isTranscribingRef.current) {
-        try { recognition.start(); } catch { /* already running */ }
-      } else {
-        setIsTranscribing(false);
-      }
+      setIsTranscribing(true);
+      setErrorMessage(null);
     };
 
     recognition.onresult = (event: any) => {
-      let interimText = "";
-      let finalText = "";
-      let finalConfidence = 1.0;
+      let liveInterim = "";
+      const currentSpeaker = optionsRef.current.speakerName || "Speaker";
+      const currentRole = optionsRef.current.speakerRole || "pm";
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalText += result[0].transcript;
-          finalConfidence = result[0].confidence || 1.0;
+        const res = event.results[i];
+        const transcriptChunk = res[0]?.transcript || "";
+        const conf = res[0]?.confidence || 0.95;
+
+        if (res.isFinal) {
+          const finalClean = transcriptChunk.trim();
+          if (finalClean.length > 0) {
+            const nextIdx = segmentIndexRef.current++;
+            const newSegment: TranscriptSegment = {
+              id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              speaker_name: currentSpeaker,
+              speaker_role: currentRole,
+              text: finalClean,
+              confidence: conf,
+              started_at: new Date().toISOString(),
+              segment_index: nextIdx,
+              isPending: true,
+            };
+
+            // IMMEDIATELY commit to state — NEVER vanishes!
+            setSegments((prev) => [...prev, newSegment]);
+            setInterimText("");
+
+            // Fire-and-forget DB sync
+            persistSegmentToDb(newSegment);
+          }
         } else {
-          interimText += result[0].transcript;
+          liveInterim += transcriptChunk;
         }
       }
 
-      // Update live interim display
-      if (interimText) {
-        liveSegmentRef.current = {
-          speaker_name: speakerName,
-          speaker_role: speakerRole,
-          text: interimText,
-          confidence: 0.5,
-          started_at: new Date().toISOString(),
-          segment_index: -1, // mark as interim
-          isPending: true,
-        };
-        // Trigger re-render for live preview
-        setSegments(prev => {
-          const withoutInterim = prev.filter(s => s.segment_index !== -1);
-          return [...withoutInterim, liveSegmentRef.current!];
-        });
+      if (liveInterim.trim()) {
+        setInterimText(liveInterim.trim());
       }
+    };
 
-      // Flush finalized text
-      if (finalText.trim()) {
-        // Clear interim
-        setSegments(prev => prev.filter(s => s.segment_index !== -1));
-        liveSegmentRef.current = null;
+    recognition.onerror = (event: any) => {
+      // Benign non-fatal events:
+      if (event.error === "no-speech" || event.error === "aborted") {
+        return;
+      }
+      if (event.error === "not-allowed") {
+        setErrorMessage("Microphone access was denied. Please allow microphone permissions in your browser.");
+        setIsTranscribing(false);
+        isTranscribingRef.current = false;
+        return;
+      }
+      console.warn("[Transcript] Recognition warning:", event.error);
+    };
 
-        // Clear any pending flush timer
-        if (flushTimerRef.current) {
-          clearTimeout(flushTimerRef.current);
-          flushTimerRef.current = null;
-        }
-
-        pendingTextRef.current += " " + finalText;
-
-        // Flush immediately if enough words accumulated
-        const wordCount = pendingTextRef.current.trim().split(/\s+/).length;
-        if (wordCount >= 15) {
-          const toFlush = pendingTextRef.current;
-          pendingTextRef.current = "";
-          flushSegment(toFlush, finalConfidence);
-        } else {
-          // Defer flush in case more words come quickly
-          flushTimerRef.current = setTimeout(() => {
-            const toFlush = pendingTextRef.current;
-            pendingTextRef.current = "";
-            if (toFlush.trim()) flushSegment(toFlush, finalConfidence);
-          }, FLUSH_INTERVAL_MS);
-        }
+    recognition.onend = () => {
+      setInterimText("");
+      // Continuous loop restart with gentle delay to avoid browser engine lockup
+      if (isTranscribingRef.current && optionsRef.current.enabled) {
+        if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (isTranscribingRef.current && optionsRef.current.enabled) {
+            try {
+              recognition.start();
+            } catch (err: any) {
+              // If already started or transitioning, retry once more in 300ms
+              if (err.name !== "InvalidStateError") {
+                console.warn("[Transcript] Restart notice:", err);
+              }
+            }
+          }
+        }, 200);
+      } else {
+        setIsTranscribing(false);
       }
     };
 
@@ -234,99 +268,126 @@ export function useMeetingTranscript({
     try {
       recognition.start();
     } catch (err) {
-      console.warn("[Transcript] Could not start recognition:", err);
+      console.warn("[Transcript] start() failed:", err);
     }
-  }, [isSupported, enabled, speakerName, speakerRole, flushSegment]);
+  }, [isSupported, persistSegmentToDb]);
 
-  // ── Stop transcription ────────────────────────────────────────────────────
+  // ── Stop Transcription ────────────────────────────────────────────────────
   const stopTranscription = React.useCallback(() => {
     isTranscribingRef.current = false;
     setIsTranscribing(false);
+    setInterimText("");
 
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = null;
-    }
-
-    // Flush whatever's still pending
-    if (pendingTextRef.current.trim()) {
-      flushSegment(pendingTextRef.current, 1.0);
-      pendingTextRef.current = "";
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
     }
 
     try {
       recognitionRef.current?.stop();
-      recognitionRef.current?.abort();
-    } catch { /* already stopped */ }
+    } catch {}
     recognitionRef.current = null;
-  }, [flushSegment]);
+  }, []);
 
-  // ── Auto-start / stop when enabled changes (e.g. mic mute/unmute) ─────────
+  // ── Auto-start when enabled (and mic unmuted) ──────────────────────────────
   React.useEffect(() => {
     if (enabled && isSupported) {
       const timer = setTimeout(() => {
         startTranscription();
-      }, 1000);
+      }, 300);
       return () => clearTimeout(timer);
     } else {
       stopTranscription();
     }
   }, [enabled, isSupported, startTranscription, stopTranscription]);
 
-  // ── Load existing segments from DB on mount ───────────────────────────────
+  // ── Fetch existing segments from Supabase on mount ────────────────────────
   React.useEffect(() => {
-    if (!meetingId) return;
+    if (!roomId) return;
+    let active = true;
+
     const supabase = createClient() as any;
     supabase
       .from("meeting_transcript_segments")
       .select("*")
-      .eq("meeting_id", meetingId)
+      .eq("room_id", roomId)
       .order("segment_index", { ascending: true })
-      .then(({ data }: any) => {
-        if (data?.length) {
-          setSegments(data.map((d: any) => ({
-            id: d.id,
-            speaker_name: d.speaker_name,
-            speaker_role: d.speaker_role,
-            text: d.text,
-            confidence: d.confidence || 1,
-            started_at: d.started_at,
-            segment_index: d.segment_index,
-            isPending: false,
-          })));
-          segmentIndexRef.current = Math.max(...data.map((d: any) => d.segment_index)) + 1;
+      .then(({ data, error }: any) => {
+        if (!error && data?.length && active) {
+          setSegments((prev) => {
+            // Merge with local state without duplicates
+            const existingIds = new Set(prev.map((s) => s.id));
+            const existingTexts = new Set(prev.map((s) => s.text));
+            const remoteSegments: TranscriptSegment[] = data
+              .filter((d: any) => !existingIds.has(d.id) && !existingTexts.has(d.text))
+              .map((d: any) => ({
+                id: d.id,
+                speaker_name: d.speaker_name,
+                speaker_role: d.speaker_role,
+                text: d.text,
+                confidence: d.confidence ?? 1.0,
+                started_at: d.started_at,
+                segment_index: d.segment_index,
+                isPending: false,
+              }));
+
+            const merged = [...prev, ...remoteSegments].sort(
+              (a, b) => a.segment_index - b.segment_index
+            );
+            segmentIndexRef.current = merged.length;
+            return merged;
+          });
         }
       });
-  }, [meetingId]);
 
-  // ── Supabase Realtime: subscribe to new segments from the other participant ─
+    return () => {
+      active = false;
+    };
+  }, [roomId]);
+
+  // ── Supabase Realtime: receive live speech from other attendees ───────────
   React.useEffect(() => {
-    if (!meetingId) return;
+    if (!roomId) return;
+
     const supabase = createClient() as any;
     const channel = supabase
-      .channel(`transcript:${meetingId}`)
+      .channel(`transcript_room_${roomId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "meeting_transcript_segments", filter: `meeting_id=eq.${meetingId}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "meeting_transcript_segments",
+          filter: `room_id=eq.${roomId}`,
+        },
         (payload: any) => {
           const newSeg = payload.new;
-          // Only add segments from OTHER speakers (avoid duplicates of own segments)
-          if (newSeg.speaker_name !== speakerName || newSeg.speaker_role !== speakerRole) {
-            setSegments(prev => {
-              const exists = prev.some(s => s.id === newSeg.id);
-              if (exists) return prev;
-              return [...prev.filter(s => s.segment_index !== -1), {
-                id: newSeg.id,
-                speaker_name: newSeg.speaker_name,
-                speaker_role: newSeg.speaker_role,
-                text: newSeg.text,
-                confidence: newSeg.confidence || 1,
-                started_at: newSeg.started_at,
-                segment_index: newSeg.segment_index,
-                isPending: false,
-              }].sort((a, b) => a.segment_index - b.segment_index);
-            });
-          }
+          if (!newSeg?.text) return;
+
+          // Do not duplicate our own segments if already received locally
+          setSegments((prev) => {
+            const alreadyHas = prev.some(
+              (s) =>
+                s.id === newSeg.id ||
+                (s.text === newSeg.text && Math.abs(new Date(s.started_at).getTime() - new Date(newSeg.started_at).getTime()) < 3000)
+            );
+            if (alreadyHas) return prev;
+
+            const seg: TranscriptSegment = {
+              id: newSeg.id,
+              speaker_name: newSeg.speaker_name,
+              speaker_role: newSeg.speaker_role,
+              text: newSeg.text,
+              confidence: newSeg.confidence ?? 1.0,
+              started_at: newSeg.started_at,
+              segment_index: newSeg.segment_index,
+              isPending: false,
+            };
+
+            const updated = [...prev, seg].sort((a, b) => a.segment_index - b.segment_index);
+            segmentIndexRef.current = updated.length;
+            return updated;
+          });
         }
       )
       .subscribe();
@@ -334,59 +395,128 @@ export function useMeetingTranscript({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [meetingId, speakerName, speakerRole]);
+  }, [roomId]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────────
   React.useEffect(() => {
     return () => {
       isTranscribingRef.current = false;
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-      try { recognitionRef.current?.abort(); } catch { /* safe */ }
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      try {
+        recognitionRef.current?.abort();
+      } catch {}
     };
   }, []);
 
-  // ── Consolidate: call DB function to merge all segments into a source ─────
-  const consolidateToSource = React.useCallback(async (): Promise<string | null> => {
-    if (!meetingId) return null;
-    try {
-      const supabase = createClient() as any;
-      const { data, error } = await supabase.rpc("consolidate_meeting_transcript", {
-        p_meeting_id: meetingId,
-      });
-      if (error) {
-        console.error("[Transcript] Consolidation error:", error);
-        return null;
-      }
-      return data as string; // returns the requirement_source UUID
-    } catch (err) {
-      console.error("[Transcript] consolidateToSource error:", err);
-      return null;
+  // ── Clear transcript ──────────────────────────────────────────────────────
+  const clearTranscript = React.useCallback(() => {
+    setSegments([]);
+    setInterimText("");
+    segmentIndexRef.current = 0;
+    if (typeof window !== "undefined" && roomId) {
+      try {
+        sessionStorage.removeItem(`orion_transcript_${roomId}`);
+      } catch {}
     }
-  }, [meetingId]);
+  }, [roomId]);
 
-  // ── Computed values ───────────────────────────────────────────────────────
+  // ── Full transcript formatted for AI / download ───────────────────────────
   const fullTranscript = React.useMemo(() => {
     return segments
-      .filter(s => s.segment_index !== -1) // exclude interim
-      .sort((a, b) => a.segment_index - b.segment_index)
-      .map(s => `[${s.speaker_name}]: ${s.text}`)
+      .map((s) => `[${s.speaker_name} (${s.speaker_role.toUpperCase()})]: ${s.text}`)
       .join("\n");
   }, [segments]);
 
   const wordCount = React.useMemo(() => {
-    return segments
-      .filter(s => s.segment_index !== -1)
-      .reduce((acc, s) => acc + s.text.split(/\s+/).filter(Boolean).length, 0);
+    return segments.reduce(
+      (acc, s) => acc + s.text.split(/\s+/).filter(Boolean).length,
+      0
+    );
   }, [segments]);
+
+  // ── Consolidate to requirements source ─────────────────────────────────────
+  const consolidateToSource = React.useCallback(async (): Promise<string | null> => {
+    const { meetingId: mId, projectId: pId, roomId: rId } = optionsRef.current;
+    if (segments.length === 0) return null;
+
+    const transcriptBody = fullTranscript;
+    const totalWords = wordCount;
+
+    try {
+      const supabase = createClient() as any;
+
+      // 1. Try DB function if valid UUID
+      if (isUuid(mId)) {
+        const { data, error } = await supabase.rpc("consolidate_meeting_transcript", {
+          p_meeting_id: mId,
+        });
+        if (!error && data) return data as string;
+      }
+
+      // 2. Direct fallback: upsert into requirement_sources if valid projectId
+      if (isUuid(pId)) {
+        const title = `Meeting Transcript: Room ${rId}`;
+        const fileName = `transcript_${rId}.txt`;
+
+        const { data: sourceData, error: sourceError } = await supabase
+          .from("requirement_sources")
+          .insert({
+            project_id: pId,
+            source_type: "meeting_transcript",
+            title,
+            file_name: fileName,
+            mime_type: "text/plain",
+            raw_text: transcriptBody,
+            extracted_text: transcriptBody,
+            word_count: totalWords,
+            status: "processed",
+          })
+          .select("id")
+          .maybeSingle();
+
+        if (!sourceError && sourceData?.id) {
+          // Also link to client_meetings if meeting exists
+          if (isUuid(mId)) {
+            await supabase
+              .from("client_meetings")
+              .update({
+                transcript_source_id: sourceData.id,
+                total_words_spoken: totalWords,
+              })
+              .eq("id", mId);
+          }
+          return sourceData.id;
+        }
+      }
+
+      // 3. Fallback: Save directly into meeting notes so AI still has it
+      if (isUuid(mId) || rId) {
+        await supabase
+          .from("client_meetings")
+          .update({
+            live_notes: `=== MEETING TRANSCRIPT ===\n${transcriptBody}`,
+          })
+          .eq(isUuid(mId) ? "id" : "room_id", isUuid(mId) ? mId : rId);
+      }
+
+      return "consolidated-local";
+    } catch (err) {
+      console.warn("[Transcript] consolidateToSource fallback notice:", err);
+      return null;
+    }
+  }, [segments, fullTranscript, wordCount]);
 
   return {
     segments,
+    interimText,
     isTranscribing,
     isSupported,
+    error: errorMessage,
     startTranscription,
     stopTranscription,
     consolidateToSource,
     fullTranscript,
     wordCount,
+    clearTranscript,
   };
 }

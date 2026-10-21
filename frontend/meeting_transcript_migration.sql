@@ -9,11 +9,11 @@
 -- ────────────────────────────────────────────────────────────────────────────
 create table if not exists meeting_transcript_segments (
   id               uuid primary key default gen_random_uuid(),
-  meeting_id       uuid not null references client_meetings(id) on delete cascade,
-  project_id       uuid not null references projects(id) on delete cascade,
+  meeting_id       uuid references client_meetings(id) on delete cascade,
+  project_id       uuid references projects(id) on delete cascade,
   room_id          text not null,
   speaker_name     text not null default 'Unknown',
-  speaker_role     text not null default 'participant' check (speaker_role in ('pm', 'client', 'system')),
+  speaker_role     text not null default 'pm',
   text             text not null,
   confidence       float default 1.0,        -- Web Speech API confidence score (0–1)
   segment_index    int  not null default 0,  -- ordering within the meeting
@@ -23,6 +23,10 @@ create table if not exists meeting_transcript_segments (
                    ) stored,
   created_at       timestamptz default now() not null
 );
+
+-- Allow null for ad-hoc / direct video rooms
+alter table meeting_transcript_segments alter column meeting_id drop not null;
+alter table meeting_transcript_segments alter column project_id drop not null;
 
 -- Indexes for fast retrieval
 create index if not exists idx_transcript_meeting   on meeting_transcript_segments(meeting_id);

@@ -157,16 +157,19 @@ export function VideoMeetingRoom({
   // ── Continuous live meeting transcription ──
   const {
     segments: transcriptSegments,
+    interimText,
     isTranscribing,
     isSupported: isSpeechSupported,
+    error: speechError,
     startTranscription,
     stopTranscription,
     consolidateToSource,
     fullTranscript,
     wordCount: transcriptWordCount,
+    clearTranscript,
   } = useMeetingTranscript({
-    meetingId: currentMeeting.id || dbMeeting?.id || null,
-    projectId: currentMeeting.project_id || dbMeeting?.project_id || null,
+    meetingId: dbMeeting?.id || currentMeeting.id || null,
+    projectId: dbMeeting?.project_id || currentMeeting.project_id || null,
     roomId,
     speakerName: displayName,
     speakerRole: userRole,
@@ -178,12 +181,12 @@ export function VideoMeetingRoom({
   const [isTranscriptCopied, setIsTranscriptCopied] = React.useState(false);
   const transcriptEndRef = React.useRef<HTMLDivElement>(null);
 
-  // Auto-scroll transcript container as speech occurs
+  // Auto-scroll transcript container as speech occurs or finalizes
   React.useEffect(() => {
     if (activeTab === "transcript") {
       transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [transcriptSegments, activeTab]);
+  }, [transcriptSegments, interimText, activeTab]);
 
   const handleConsolidateTranscript = async () => {
     setIsConsolidatingTranscript(true);
@@ -1134,10 +1137,17 @@ export function VideoMeetingRoom({
                           {transcriptWordCount} words
                         </span>
                         <span className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/50">
-                          {transcriptSegments.filter((s) => s.segment_index !== -1).length} turns
+                          {transcriptSegments.length} turns
                         </span>
                       </div>
                     </div>
+
+                    {speechError && (
+                      <div className="text-[11px] bg-red-950/50 border border-red-800/50 text-red-300 p-2 rounded-lg flex items-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                        <span>{speechError}</span>
+                      </div>
+                    )}
 
                     {!isSpeechSupported && (
                       <div className="text-[11px] bg-amber-950/40 border border-amber-800/40 text-amber-300 p-2 rounded-lg flex items-center gap-1.5">
@@ -1208,7 +1218,7 @@ export function VideoMeetingRoom({
 
                   {/* Scrollable Transcript List */}
                   <div className="flex-1 p-3 overflow-y-auto space-y-2.5">
-                    {transcriptSegments.length === 0 ? (
+                    {transcriptSegments.length === 0 && !interimText ? (
                       <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
                         <div className="h-10 w-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
                           <Radio className="h-5 w-5" />
@@ -1221,49 +1231,69 @@ export function VideoMeetingRoom({
                         </div>
                       </div>
                     ) : (
-                      transcriptSegments.map((seg, idx) => {
-                        const isInterim = seg.segment_index === -1;
-                        const isSelf = seg.speaker_name === displayName;
-                        return (
-                          <div
-                            key={seg.id || `seg-${idx}`}
-                            className={`rounded-xl p-2.5 text-xs transition-all ${
-                              isInterim
-                                ? "bg-indigo-950/30 border border-indigo-500/40 animate-pulse"
-                                : "bg-zinc-950 border border-zinc-800/80"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between mb-1">
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
-                                    seg.speaker_role === "pm"
-                                      ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
-                                      : seg.speaker_role === "client"
-                                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                                      : "bg-zinc-800 text-zinc-400"
-                                  }`}
-                                >
-                                  {seg.speaker_role.toUpperCase()}
-                                </span>
-                                <span className="font-semibold text-zinc-200 text-[11px]">
-                                  {seg.speaker_name} {isSelf ? "(You)" : ""}
+                      <>
+                        {transcriptSegments.map((seg, idx) => {
+                          const isSelf = seg.speaker_name === displayName;
+                          return (
+                            <div
+                              key={seg.id || `seg-${idx}`}
+                              className="rounded-xl p-2.5 text-xs bg-zinc-950 border border-zinc-800/80 transition-all shadow-sm"
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                                      seg.speaker_role === "pm"
+                                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                                        : seg.speaker_role === "client"
+                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                        : "bg-zinc-800 text-zinc-400"
+                                    }`}
+                                  >
+                                    {seg.speaker_role.toUpperCase()}
+                                  </span>
+                                  <span className="font-semibold text-zinc-200 text-[11px]">
+                                    {seg.speaker_name} {isSelf ? "(You)" : ""}
+                                  </span>
+                                </div>
+                                <span className="text-[9px] text-zinc-500 font-mono">
+                                  {new Date(seg.started_at).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    second: "2-digit",
+                                  })}
                                 </span>
                               </div>
-                              <span className="text-[9px] text-zinc-500 font-mono">
-                                {new Date(seg.started_at).toLocaleTimeString([], {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                  second: "2-digit",
-                                })}
+                              <p className="text-xs leading-relaxed text-zinc-200 select-text">
+                                {seg.text}
+                              </p>
+                            </div>
+                          );
+                        })}
+
+                        {/* Live streaming preview while speaker is talking */}
+                        {interimText && (
+                          <div className="rounded-xl p-2.5 text-xs bg-indigo-950/40 border border-indigo-500/40 animate-pulse">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                  {userRole.toUpperCase()}
+                                </span>
+                                <span className="font-semibold text-zinc-200 text-[11px]">
+                                  {displayName} (Speaking...)
+                                </span>
+                              </div>
+                              <span className="text-[9px] text-indigo-400 font-mono flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping inline-block" />
+                                Live
                               </span>
                             </div>
-                            <p className={`text-xs leading-relaxed ${isInterim ? "text-indigo-200 italic" : "text-zinc-300"}`}>
-                              {seg.text}
+                            <p className="text-xs leading-relaxed text-indigo-200 italic">
+                              {interimText}
                             </p>
                           </div>
-                        );
-                      })
+                        )}
+                      </>
                     )}
                     <div ref={transcriptEndRef} />
                   </div>
