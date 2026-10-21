@@ -25,10 +25,12 @@ import {
   Shield,
   Volume2,
   Sparkle,
+  Radio,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useClientPortal } from "@/lib/contexts/client-portal-context";
 import { ClientMeeting } from "@/lib/supabase/client-portal-types";
+import { useMeetingTranscript } from "@/lib/hooks/use-meeting-transcript";
 
 interface VideoMeetingRoomProps {
   roomId: string;
@@ -143,7 +145,7 @@ export function VideoMeetingRoom({
   const [isVideoOn, setIsVideoOn] = React.useState(true);
   const [isScreenSharing, setIsScreenSharing] = React.useState(false);
   const [isCopied, setIsCopied] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<"chat" | "notes" | "participants">("notes");
+  const [activeTab, setActiveTab] = React.useState<"chat" | "notes" | "participants" | "transcript">("notes");
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [isGeneratingAi, setIsGeneratingAi] = React.useState(false);
   const [notes, setNotes] = React.useState(currentMeeting.live_notes || "");
@@ -151,6 +153,57 @@ export function VideoMeetingRoom({
   const [actionItems, setActionItems] = React.useState<string[]>(currentMeeting.action_items || []);
   const [meetingEnded, setMeetingEnded] = React.useState(false);
   const [remoteVideoActive, setRemoteVideoActive] = React.useState(false);
+
+  // ── Continuous live meeting transcription ──
+  const {
+    segments: transcriptSegments,
+    isTranscribing,
+    isSupported: isSpeechSupported,
+    startTranscription,
+    stopTranscription,
+    consolidateToSource,
+    fullTranscript,
+    wordCount: transcriptWordCount,
+  } = useMeetingTranscript({
+    meetingId: currentMeeting.id || dbMeeting?.id || null,
+    projectId: currentMeeting.project_id || dbMeeting?.project_id || null,
+    roomId,
+    speakerName: displayName,
+    speakerRole: userRole,
+    enabled: isMicOn,
+  });
+
+  const [isConsolidatingTranscript, setIsConsolidatingTranscript] = React.useState(false);
+  const [transcriptSavedSuccess, setTranscriptSavedSuccess] = React.useState(false);
+  const [isTranscriptCopied, setIsTranscriptCopied] = React.useState(false);
+  const transcriptEndRef = React.useRef<HTMLDivElement>(null);
+
+  // Auto-scroll transcript container as speech occurs
+  React.useEffect(() => {
+    if (activeTab === "transcript") {
+      transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [transcriptSegments, activeTab]);
+
+  const handleConsolidateTranscript = async () => {
+    setIsConsolidatingTranscript(true);
+    try {
+      const sourceId = await consolidateToSource();
+      if (sourceId) {
+        setTranscriptSavedSuccess(true);
+        setTimeout(() => setTranscriptSavedSuccess(false), 3000);
+      }
+    } finally {
+      setIsConsolidatingTranscript(false);
+    }
+  };
+
+  const handleCopyTranscript = () => {
+    if (!fullTranscript) return;
+    navigator.clipboard.writeText(fullTranscript);
+    setIsTranscriptCopied(true);
+    setTimeout(() => setIsTranscriptCopied(false), 2000);
+  };
 
   // ── Live presence: real participants in this room ──
   const [participants, setParticipants] = React.useState<RoomParticipant[]>([]);
@@ -630,7 +683,12 @@ export function VideoMeetingRoom({
     setIsGeneratingAi(false);
   };
 
-  const handleEndMeeting = () => {
+  const handleEndMeeting = async () => {
+    try {
+      await consolidateToSource();
+    } catch (e) {
+      console.warn("Could not auto-consolidate transcript on meeting end:", e);
+    }
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     peerConnectionRef.current?.close();
@@ -664,9 +722,9 @@ export function VideoMeetingRoom({
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">Meeting Ended</h2>
+            <h2 className="text-xl font-bold text-white">Meeting Ended & Transcripts Saved</h2>
             <p className="text-sm text-zinc-400 mt-1">
-              Your meeting notes and action items have been securely saved to the project portal.
+              Your meeting notes, continuous speech transcript ({transcriptWordCount} words, {transcriptSegments.filter(s => s.segment_index !== -1).length} utterances), and action items have been securely stored in the project requirements database for AI analysis.
             </p>
           </div>
 
@@ -935,30 +993,38 @@ export function VideoMeetingRoom({
           {sidebarOpen && (
             <motion.aside
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 360, opacity: 1 }}
+              animate={{ width: 380, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
               className="h-full bg-zinc-900 border-l border-zinc-800 flex flex-col overflow-hidden z-10"
             >
               {/* Tab Selector */}
               <div className="p-2 border-b border-zinc-800 flex gap-1 bg-zinc-900/90">
-                {(["notes", "chat", "participants"] as const).map((tab) => (
+                {(["notes", "transcript", "chat", "participants"] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                    className={`flex-1 flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-xs font-semibold transition-colors ${
                       activeTab === tab
                         ? "bg-indigo-600 text-white shadow-sm"
                         : "text-zinc-400 hover:text-white hover:bg-zinc-800"
                     }`}
                   >
-                    {tab === "notes" && <FileText className="h-3.5 w-3.5" />}
-                    {tab === "chat" && <MessageSquare className="h-3.5 w-3.5" />}
-                    {tab === "participants" && <Users className="h-3.5 w-3.5" />}
-                    <span>
-                      {tab === "notes" && "Notes & AI"}
-                      {tab === "chat" && "Live Chat"}
-                      {tab === "participants" && `People (${participants.length + 1})`}
+                    {tab === "notes" && <FileText className="h-3.5 w-3.5 shrink-0" />}
+                    {tab === "transcript" && (
+                      <Radio
+                        className={`h-3.5 w-3.5 shrink-0 ${
+                          isTranscribing ? "text-emerald-300 animate-pulse" : ""
+                        }`}
+                      />
+                    )}
+                    {tab === "chat" && <MessageSquare className="h-3.5 w-3.5 shrink-0" />}
+                    {tab === "participants" && <Users className="h-3.5 w-3.5 shrink-0" />}
+                    <span className="truncate">
+                      {tab === "notes" && "Notes"}
+                      {tab === "transcript" && `Transcript${transcriptSegments.filter(s => s.segment_index !== -1).length ? ` (${transcriptSegments.filter(s => s.segment_index !== -1).length})` : ""}`}
+                      {tab === "chat" && "Chat"}
+                      {tab === "participants" && `(${participants.length + 1})`}
                     </span>
                   </button>
                 ))}
@@ -1033,6 +1099,173 @@ export function VideoMeetingRoom({
                         Click "Generate Summary" to produce an executive briefing and action item checklist from notes.
                       </p>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Tab: Continuous Live Transcript */}
+              {activeTab === "transcript" && (
+                <div className="flex-1 flex flex-col overflow-hidden bg-zinc-900">
+                  {/* Status & controls header */}
+                  <div className="p-3 border-b border-zinc-800 bg-zinc-950/70 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="relative flex h-2.5 w-2.5">
+                          {isTranscribing && (
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          )}
+                          <span
+                            className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                              isTranscribing ? "bg-emerald-500" : "bg-zinc-500"
+                            }`}
+                          />
+                        </span>
+                        <span className="text-xs font-semibold text-zinc-200">
+                          {isTranscribing
+                            ? "Continuous Capture Active"
+                            : isMicOn
+                            ? "Transcription Paused"
+                            : "Microphone Muted"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/50">
+                          {transcriptWordCount} words
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/50">
+                          {transcriptSegments.filter((s) => s.segment_index !== -1).length} turns
+                        </span>
+                      </div>
+                    </div>
+
+                    {!isSpeechSupported && (
+                      <div className="text-[11px] bg-amber-950/40 border border-amber-800/40 text-amber-300 p-2 rounded-lg flex items-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span>Speech API requires Chrome, Edge, or Safari.</span>
+                      </div>
+                    )}
+
+                    {/* Quick action bar */}
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <button
+                        onClick={handleCopyTranscript}
+                        disabled={transcriptSegments.length === 0}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-200 rounded-lg text-[11px] font-medium transition-colors"
+                      >
+                        {isTranscriptCopied ? (
+                          <>
+                            <Check className="h-3 w-3 text-emerald-400" />
+                            <span className="text-emerald-400">Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3" />
+                            <span>Copy All</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={handleConsolidateTranscript}
+                        disabled={isConsolidatingTranscript || transcriptSegments.length === 0}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg text-[11px] font-medium transition-colors shadow-sm"
+                      >
+                        {isConsolidatingTranscript ? (
+                          <>
+                            <Sparkle className="h-3 w-3 animate-spin" />
+                            <span>Saving…</span>
+                          </>
+                        ) : transcriptSavedSuccess ? (
+                          <>
+                            <Check className="h-3 w-3 text-emerald-300" />
+                            <span className="text-emerald-300">Pushed to AI!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3 w-3 text-indigo-200" />
+                            <span>Push to Requirements</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (isTranscribing) stopTranscription();
+                          else startTranscription();
+                        }}
+                        className={`p-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                          isTranscribing
+                            ? "bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700"
+                            : "bg-emerald-600/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30"
+                        }`}
+                        title={isTranscribing ? "Pause transcribing" : "Resume transcribing"}
+                      >
+                        <Mic className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scrollable Transcript List */}
+                  <div className="flex-1 p-3 overflow-y-auto space-y-2.5">
+                    {transcriptSegments.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
+                        <div className="h-10 w-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                          <Radio className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-zinc-300">Continuous Transcripts</p>
+                          <p className="text-[11px] text-zinc-500 mt-1 max-w-[240px] leading-relaxed">
+                            Speak normally into your microphone. Words are transcribed continuously in real time, tagged by speaker, and saved directly to the Orion requirements database for AI analysis.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      transcriptSegments.map((seg, idx) => {
+                        const isInterim = seg.segment_index === -1;
+                        const isSelf = seg.speaker_name === displayName;
+                        return (
+                          <div
+                            key={seg.id || `seg-${idx}`}
+                            className={`rounded-xl p-2.5 text-xs transition-all ${
+                              isInterim
+                                ? "bg-indigo-950/30 border border-indigo-500/40 animate-pulse"
+                                : "bg-zinc-950 border border-zinc-800/80"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                                    seg.speaker_role === "pm"
+                                      ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                                      : seg.speaker_role === "client"
+                                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                      : "bg-zinc-800 text-zinc-400"
+                                  }`}
+                                >
+                                  {seg.speaker_role.toUpperCase()}
+                                </span>
+                                <span className="font-semibold text-zinc-200 text-[11px]">
+                                  {seg.speaker_name} {isSelf ? "(You)" : ""}
+                                </span>
+                              </div>
+                              <span className="text-[9px] text-zinc-500 font-mono">
+                                {new Date(seg.started_at).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                            <p className={`text-xs leading-relaxed ${isInterim ? "text-indigo-200 italic" : "text-zinc-300"}`}>
+                              {seg.text}
+                            </p>
+                          </div>
+                        );
+                      })
+                    )}
+                    <div ref={transcriptEndRef} />
                   </div>
                 </div>
               )}

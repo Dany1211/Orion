@@ -23,6 +23,8 @@ export async function POST(req: NextRequest) {
       { data: risksData },
       { data: sourcesData },
       { data: orgMembersData },
+      { data: transcriptData },
+      { data: meetingsData },
     ] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
       supabase.from("project_intelligence").select("*").eq("project_id", projectId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
@@ -31,6 +33,8 @@ export async function POST(req: NextRequest) {
       supabase.from("risks").select("*").eq("project_id", projectId).limit(20),
       supabase.from("requirement_sources").select("title, source_type, status, extracted_text, word_count, created_at").eq("project_id", projectId).limit(10),
       supabase.from("organization_members").select("role, profiles(full_name, email)").limit(30),
+      supabase.from("meeting_transcript_segments").select("speaker_name, speaker_role, text, started_at, segment_index").eq("project_id", projectId).order("segment_index", { ascending: true }).limit(80).catch(() => ({ data: null })),
+      supabase.from("client_meetings").select("title, room_id, scheduled_at, status, live_notes, ai_summary").eq("project_id", projectId).order("scheduled_at", { ascending: false }).limit(5).catch(() => ({ data: null })),
     ]);
 
     // Fallback / merge with client-provided context if database tables are still populating
@@ -41,6 +45,8 @@ export async function POST(req: NextRequest) {
     const risks = (risksData && risksData.length > 0) ? risksData : (clientContext?.risks || []);
     const sources = (sourcesData && sourcesData.length > 0) ? sourcesData : (clientContext?.sources || []);
     const orgMembers = orgMembersData || clientContext?.members || [];
+    const transcripts = transcriptData || [];
+    const clientMeetings = meetingsData || [];
 
     // ── Build comprehensive project context ───────────────────────────────
     let projectContext = "";
@@ -80,44 +86,58 @@ ${techRecs ? `Tech Stack Recommendations: ${techRecs}` : ""}
 
     const requirementsContext = requirements?.length
       ? `\nEXTRACTED REQUIREMENTS (${requirements.length} total):\n` +
-        requirements
-          .map(
-            (r: any, idx: number) =>
-              `${idx + 1}. [${(r.priority || "MEDIUM").toUpperCase()}] ${r.title} | Category: ${r.category || r.req_type || "Functional"} | Status: ${r.status || "confirmed"} | Complexity: ${r.complexity || "medium"} | Effort: ${r.estimated_effort_hours || "?"}h\n   Details: ${r.description || ""}`
-          )
-          .join("\n")
+      requirements
+        .map(
+          (r: any, idx: number) =>
+            `${idx + 1}. [${(r.priority || "MEDIUM").toUpperCase()}] ${r.title} | Category: ${r.category || r.req_type || "Functional"} | Status: ${r.status || "confirmed"} | Complexity: ${r.complexity || "medium"} | Effort: ${r.estimated_effort_hours || "?"}h\n   Details: ${r.description || ""}`
+        )
+        .join("\n")
       : "\nNo requirements extracted yet.";
 
     const sprintsContext = sprints?.length
       ? `\nSPRINT ROADMAP (${sprints.length} total):\n` +
-        sprints
-          .map((s: any) => `- Sprint ${s.sprint_number || ""}: ${s.name || s.title} (${s.status || "planned"})${s.start_date ? ` [${s.start_date} → ${s.end_date}]` : ""}${s.goal ? ` - Goal: ${s.goal}` : ""}`)
-          .join("\n")
+      sprints
+        .map((s: any) => `- Sprint ${s.sprint_number || ""}: ${s.name || s.title} (${s.status || "planned"})${s.start_date ? ` [${s.start_date} → ${s.end_date}]` : ""}${s.goal ? ` - Goal: ${s.goal}` : ""}`)
+        .join("\n")
       : "\nNo sprints defined yet.";
 
     const risksContext = risks?.length
       ? `\nTHREAT MATRIX & RISKS (${risks.length} total):\n` +
-        risks
-          .map((r: any) => `- [${(r.level || r.severity || "MEDIUM").toUpperCase()}] ${r.title}: ${r.description || ""} | Mitigation: ${r.mitigation_strategy || r.mitigation || "N/A"}`)
-          .join("\n")
+      risks
+        .map((r: any) => `- [${(r.level || r.severity || "MEDIUM").toUpperCase()}] ${r.title}: ${r.description || ""} | Mitigation: ${r.mitigation_strategy || r.mitigation || "N/A"}`)
+        .join("\n")
       : "\nNo risks recorded.";
 
     const sourcesContext = sources?.length
       ? `\nSPECIFICATIONS & DOCUMENTS (${sources.length} total):\n` +
-        sources
-          .map((s: any) => {
-            const preview = s.extracted_text ? ` - Text Snippet: "${s.extracted_text.slice(0, 300).replace(/\n+/g, " ")}..."` : "";
-            return `- ${s.title || s.file_name} (${s.source_type || "Document"}, status: ${s.status || "processed"})${preview}`;
-          })
-          .join("\n")
+      sources
+        .map((s: any) => {
+          const preview = s.extracted_text ? ` - Text Snippet: "${s.extracted_text.slice(0, 300).replace(/\n+/g, " ")}..."` : "";
+          return `- ${s.title || s.file_name} (${s.source_type || "Document"}, status: ${s.status || "processed"})${preview}`;
+        })
+        .join("\n")
       : "";
 
     const teamContext = orgMembers?.length
       ? `\nTEAM & WORKSPACE MEMBERS (${orgMembers.length} total):\n` +
-        orgMembers
-          .map((m: any) => `- ${m.profiles?.full_name || m.profiles?.email || "Team Member"} (${m.role || "Member"})`)
-          .join("\n")
+      orgMembers
+        .map((m: any) => `- ${m.profiles?.full_name || m.profiles?.email || "Team Member"} (${m.role || "Member"})`)
+        .join("\n")
       : `\nTeam Size: ${project?.team_size || "1+ members"}`;
+
+    const transcriptContext = transcripts?.length
+      ? `\nLIVE RECORDED MEETING TRANSCRIPTS & CLIENT CALL UTTERANCES (${transcripts.length} segments):\n` +
+      transcripts
+        .map((t: any) => `[${t.speaker_name || "Speaker"} (${(t.speaker_role || "participant").toUpperCase()})]: ${t.text}`)
+        .join("\n")
+      : "";
+
+    const meetingsContext = clientMeetings?.length
+      ? `\nSCHEDULED & COMPLETED CLIENT MEETINGS (${clientMeetings.length} total):\n` +
+      clientMeetings
+        .map((m: any) => `- "${m.title}" (Status: ${m.status}, Room: ${m.room_id})${m.ai_summary ? `\n   AI Meeting Summary: ${m.ai_summary}` : ""}${m.live_notes ? `\n   Meeting Notes: ${m.live_notes}` : ""}`)
+        .join("\n")
+      : "";
 
     const systemPrompt = `You are Orion AI, an expert software requirements analyst, solution architect, and project management assistant embedded directly into this project in the Orion platform.
 
@@ -130,13 +150,16 @@ ${requirementsContext}
 ${sprintsContext}
 ${risksContext}
 ${sourcesContext}
+${meetingsContext}
+${transcriptContext}
 
 Your Responsibilities:
 1. Answer any question about this project's requirements, scope, team, specifications, architecture, sprint breakdown, and technical risks.
-2. Directly refer to the specifications, documents, and requirements listed above.
-3. If asked about team size or members, use the TEAM & WORKSPACE MEMBERS and Project Team Size info provided above.
-4. If asked for a summary, provide a clear, professional breakdown of the project overview, key goals, requirements count, and roadmap based on the context.
-5. Format your answers neatly using Markdown (bullet points, bold text, clear sections).`;
+2. Directly refer to the specifications, documents, requirements, and meeting transcripts listed above.
+3. If asked what was said or decided in client meetings, cite the meeting transcripts and meeting summaries verbatim or summarized accurately.
+4. If asked about team size or members, use the TEAM & WORKSPACE MEMBERS and Project Team Size info provided above.
+5. If asked for a summary, provide a clear, professional breakdown of the project overview, key goals, requirements count, and roadmap based on the context.
+6. Format your answers neatly using Markdown (bullet points, bold text, clear sections).`;
 
     // ── Call Groq with streaming ──────────────────────────────────────────
     const model = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
