@@ -21,6 +21,7 @@ interface UseTranscriptOptions {
   speakerName: string;
   speakerRole: "pm" | "client";
   enabled?: boolean;
+  onSegmentFinalized?: (seg: TranscriptSegment) => void;
 }
 
 interface UseTranscriptReturn {
@@ -31,6 +32,7 @@ interface UseTranscriptReturn {
   error: string | null;
   startTranscription: () => void;
   stopTranscription: () => void;
+  addRemoteSegment: (seg: TranscriptSegment) => void;
   consolidateToSource: () => Promise<string | null>;
   fullTranscript: string;
   wordCount: number;
@@ -42,6 +44,12 @@ function isUuid(val: any): boolean {
   return typeof val === "string" && UUID_REGEX.test(val);
 }
 
+function checkIsSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Safari/i.test(ua) && !/Chrome|Chromium|Edg|Android/i.test(ua);
+}
+
 export function useMeetingTranscript({
   meetingId,
   projectId,
@@ -49,10 +57,10 @@ export function useMeetingTranscript({
   speakerName,
   speakerRole,
   enabled = true,
+  onSegmentFinalized,
 }: UseTranscriptOptions): UseTranscriptReturn {
   // ── States ────────────────────────────────────────────────────────────────
   const [segments, setSegments] = React.useState<TranscriptSegment[]>(() => {
-    // Restore from session storage if available
     if (typeof window !== "undefined" && roomId) {
       try {
         const cached = sessionStorage.getItem(`orion_transcript_${roomId}`);
@@ -76,6 +84,11 @@ export function useMeetingTranscript({
   const isTranscribingRef = React.useRef<boolean>(false);
   const segmentIndexRef = React.useRef<number>(segments.length);
   const restartTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSafariRef = React.useRef<boolean>(false);
+
+  React.useEffect(() => {
+    isSafariRef.current = checkIsSafari();
+  }, []);
 
   const optionsRef = React.useRef({
     meetingId,
@@ -84,6 +97,7 @@ export function useMeetingTranscript({
     speakerName,
     speakerRole,
     enabled,
+    onSegmentFinalized,
   });
 
   React.useEffect(() => {
@@ -94,8 +108,9 @@ export function useMeetingTranscript({
       speakerName,
       speakerRole,
       enabled,
+      onSegmentFinalized,
     };
-  }, [meetingId, projectId, roomId, speakerName, speakerRole, enabled]);
+  }, [meetingId, projectId, roomId, speakerName, speakerRole, enabled, onSegmentFinalized]);
 
   // Persist segments to sessionStorage for instant recovery
   React.useEffect(() => {
@@ -105,6 +120,24 @@ export function useMeetingTranscript({
       } catch {}
     }
   }, [segments, roomId]);
+
+  // ── Add segment received from remote participant (via broadcast or DB) ────
+  const addRemoteSegment = React.useCallback((seg: TranscriptSegment) => {
+    if (!seg || !seg.text) return;
+    setSegments((prev) => {
+      // Avoid duplicate segment
+      const exists = prev.some(
+        (s) =>
+          s.id === seg.id ||
+          (s.text.trim().toLowerCase() === seg.text.trim().toLowerCase() &&
+            Math.abs(new Date(s.started_at).getTime() - new Date(seg.started_at).getTime()) < 3000)
+      );
+      if (exists) return prev;
+      const updated = [...prev, seg].sort((a, b) => a.segment_index - b.segment_index);
+      segmentIndexRef.current = Math.max(segmentIndexRef.current, updated.length);
+      return updated;
+    });
+  }, []);
 
   // ── Save segment to Supabase (non-blocking) ──────────────────────────────
   const persistSegmentToDb = React.useCallback(
@@ -140,7 +173,6 @@ export function useMeetingTranscript({
           );
         }
       } catch (err) {
-        // Non-blocking — transcript remains safe in React state & sessionStorage
         console.warn("[Transcript] Supabase background sync notice:", err);
       }
     },
@@ -150,7 +182,7 @@ export function useMeetingTranscript({
   // ── Start Web Speech Recognition ──────────────────────────────────────────
   const startTranscription = React.useCallback(() => {
     if (!isSupported) {
-      setErrorMessage("Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.");
+      setErrorMessage("Speech recognition not supported in this browser. Please use Google Chrome or Edge.");
       return;
     }
 
@@ -164,7 +196,10 @@ export function useMeetingTranscript({
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      setErrorMessage("SpeechRecognition engine not found in this browser.");
+      return;
+    }
 
     let recognition: any;
     try {
@@ -174,10 +209,17 @@ export function useMeetingTranscript({
       return;
     }
 
-    recognition.continuous = true;
+    const isSafari = isSafariRef.current;
+    // CRITICAL: Safari fails immediately if continuous=true! Chrome/Edge require continuous=true.
+    recognition.continuous = !isSafari;
     recognition.interimResults = true;
-    recognition.lang = "en-US";
     recognition.maxAlternatives = 1;
+    // Set language matching user locale with en-US fallback
+    try {
+      recognition.lang = typeof navigator !== "undefined" ? (navigator.language || "en-US") : "en-US";
+    } catch {
+      recognition.lang = "en-US";
+    }
 
     recognition.onstart = () => {
       isTranscribingRef.current = true;
@@ -210,11 +252,16 @@ export function useMeetingTranscript({
               isPending: true,
             };
 
-            // IMMEDIATELY commit to state — NEVER vanishes!
+            // IMMEDIATELY commit to local state
             setSegments((prev) => [...prev, newSegment]);
             setInterimText("");
 
-            // Fire-and-forget DB sync
+            // Notify parent room to broadcast in real time to the other participant!
+            if (optionsRef.current.onSegmentFinalized) {
+              optionsRef.current.onSegmentFinalized(newSegment);
+            }
+
+            // Save to database
             persistSegmentToDb(newSegment);
           }
         } else {
@@ -233,31 +280,42 @@ export function useMeetingTranscript({
         return;
       }
       if (event.error === "not-allowed") {
-        setErrorMessage("Microphone access was denied. Please allow microphone permissions in your browser.");
+        setErrorMessage(
+          "Microphone speech access was blocked. Please grant microphone permissions in your browser and macOS System Settings."
+        );
         setIsTranscribing(false);
         isTranscribingRef.current = false;
         return;
       }
-      console.warn("[Transcript] Recognition warning:", event.error);
+      if (event.error === "audio-capture") {
+        setErrorMessage("No microphone detected or microphone is currently locked by another app.");
+        return;
+      }
+      if (event.error === "network") {
+        // In Chrome/Safari, network error can occur on pause; retry gently
+        console.warn("[Transcript] Speech network pause, auto-recovering...");
+        return;
+      }
+      console.warn("[Transcript] Recognition notice:", event.error);
     };
 
     recognition.onend = () => {
       setInterimText("");
-      // Continuous loop restart with gentle delay to avoid browser engine lockup
+      // Continuous loop restart
       if (isTranscribingRef.current && optionsRef.current.enabled) {
         if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+        const delay = isSafariRef.current ? 80 : 250;
         restartTimerRef.current = setTimeout(() => {
           if (isTranscribingRef.current && optionsRef.current.enabled) {
             try {
               recognition.start();
             } catch (err: any) {
-              // If already started or transitioning, retry once more in 300ms
               if (err.name !== "InvalidStateError") {
                 console.warn("[Transcript] Restart notice:", err);
               }
             }
           }
-        }, 200);
+        }, delay);
       } else {
         setIsTranscribing(false);
       }
@@ -267,8 +325,10 @@ export function useMeetingTranscript({
 
     try {
       recognition.start();
-    } catch (err) {
-      console.warn("[Transcript] start() failed:", err);
+    } catch (err: any) {
+      if (err.name !== "InvalidStateError") {
+        console.warn("[Transcript] start() failed:", err);
+      }
     }
   }, [isSupported, persistSegmentToDb]);
 
@@ -289,16 +349,36 @@ export function useMeetingTranscript({
     recognitionRef.current = null;
   }, []);
 
-  // ── Auto-start when enabled (and mic unmuted) ──────────────────────────────
+  // ── Auto-start with User Gesture Fallback ──────────────────────────────────
   React.useEffect(() => {
-    if (enabled && isSupported) {
-      const timer = setTimeout(() => {
-        startTranscription();
-      }, 300);
-      return () => clearTimeout(timer);
-    } else {
+    if (!enabled || !isSupported) {
       stopTranscription();
+      return;
     }
+
+    // Try starting after brief mount pause
+    const timer = setTimeout(() => {
+      startTranscription();
+    }, 600);
+
+    // If browser blocks startTranscription due to user-gesture requirement:
+    // Listen for the first click or keypress anywhere on the page to start it
+    const handleFirstGesture = () => {
+      if (!isTranscribingRef.current && optionsRef.current.enabled) {
+        startTranscription();
+      }
+    };
+
+    window.addEventListener("click", handleFirstGesture, { passive: true });
+    window.addEventListener("touchstart", handleFirstGesture, { passive: true });
+    window.addEventListener("keydown", handleFirstGesture, { passive: true });
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("click", handleFirstGesture);
+      window.removeEventListener("touchstart", handleFirstGesture);
+      window.removeEventListener("keydown", handleFirstGesture);
+    };
   }, [enabled, isSupported, startTranscription, stopTranscription]);
 
   // ── Fetch existing segments from Supabase on mount ────────────────────────
@@ -315,11 +395,10 @@ export function useMeetingTranscript({
       .then(({ data, error }: any) => {
         if (!error && data?.length && active) {
           setSegments((prev) => {
-            // Merge with local state without duplicates
             const existingIds = new Set(prev.map((s) => s.id));
-            const existingTexts = new Set(prev.map((s) => s.text));
+            const existingTexts = new Set(prev.map((s) => s.text.trim().toLowerCase()));
             const remoteSegments: TranscriptSegment[] = data
-              .filter((d: any) => !existingIds.has(d.id) && !existingTexts.has(d.text))
+              .filter((d: any) => !existingIds.has(d.id) && !existingTexts.has(d.text?.trim().toLowerCase()))
               .map((d: any) => ({
                 id: d.id,
                 speaker_name: d.speaker_name,
@@ -334,7 +413,7 @@ export function useMeetingTranscript({
             const merged = [...prev, ...remoteSegments].sort(
               (a, b) => a.segment_index - b.segment_index
             );
-            segmentIndexRef.current = merged.length;
+            segmentIndexRef.current = Math.max(segmentIndexRef.current, merged.length);
             return merged;
           });
         }
@@ -345,7 +424,7 @@ export function useMeetingTranscript({
     };
   }, [roomId]);
 
-  // ── Supabase Realtime: receive live speech from other attendees ───────────
+  // ── Supabase Realtime Postgres Changes ────────────────────────────────────
   React.useEffect(() => {
     if (!roomId) return;
 
@@ -364,29 +443,15 @@ export function useMeetingTranscript({
           const newSeg = payload.new;
           if (!newSeg?.text) return;
 
-          // Do not duplicate our own segments if already received locally
-          setSegments((prev) => {
-            const alreadyHas = prev.some(
-              (s) =>
-                s.id === newSeg.id ||
-                (s.text === newSeg.text && Math.abs(new Date(s.started_at).getTime() - new Date(newSeg.started_at).getTime()) < 3000)
-            );
-            if (alreadyHas) return prev;
-
-            const seg: TranscriptSegment = {
-              id: newSeg.id,
-              speaker_name: newSeg.speaker_name,
-              speaker_role: newSeg.speaker_role,
-              text: newSeg.text,
-              confidence: newSeg.confidence ?? 1.0,
-              started_at: newSeg.started_at,
-              segment_index: newSeg.segment_index,
-              isPending: false,
-            };
-
-            const updated = [...prev, seg].sort((a, b) => a.segment_index - b.segment_index);
-            segmentIndexRef.current = updated.length;
-            return updated;
+          addRemoteSegment({
+            id: newSeg.id,
+            speaker_name: newSeg.speaker_name,
+            speaker_role: newSeg.speaker_role,
+            text: newSeg.text,
+            confidence: newSeg.confidence ?? 1.0,
+            started_at: newSeg.started_at,
+            segment_index: newSeg.segment_index,
+            isPending: false,
           });
         }
       )
@@ -395,7 +460,7 @@ export function useMeetingTranscript({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [roomId]);
+  }, [roomId, addRemoteSegment]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────────
   React.useEffect(() => {
@@ -445,7 +510,6 @@ export function useMeetingTranscript({
     try {
       const supabase = createClient() as any;
 
-      // 1. Try DB function if valid UUID
       if (isUuid(mId)) {
         const { data, error } = await supabase.rpc("consolidate_meeting_transcript", {
           p_meeting_id: mId,
@@ -453,7 +517,6 @@ export function useMeetingTranscript({
         if (!error && data) return data as string;
       }
 
-      // 2. Direct fallback: upsert into requirement_sources if valid projectId
       if (isUuid(pId)) {
         const title = `Meeting Transcript: Room ${rId}`;
         const fileName = `transcript_${rId}.txt`;
@@ -475,7 +538,6 @@ export function useMeetingTranscript({
           .maybeSingle();
 
         if (!sourceError && sourceData?.id) {
-          // Also link to client_meetings if meeting exists
           if (isUuid(mId)) {
             await supabase
               .from("client_meetings")
@@ -489,7 +551,6 @@ export function useMeetingTranscript({
         }
       }
 
-      // 3. Fallback: Save directly into meeting notes so AI still has it
       if (isUuid(mId) || rId) {
         await supabase
           .from("client_meetings")
@@ -514,6 +575,7 @@ export function useMeetingTranscript({
     error: errorMessage,
     startTranscription,
     stopTranscription,
+    addRemoteSegment,
     consolidateToSource,
     fullTranscript,
     wordCount,

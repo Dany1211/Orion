@@ -163,6 +163,7 @@ export function VideoMeetingRoom({
     error: speechError,
     startTranscription,
     stopTranscription,
+    addRemoteSegment,
     consolidateToSource,
     fullTranscript,
     wordCount: transcriptWordCount,
@@ -174,6 +175,18 @@ export function VideoMeetingRoom({
     speakerName: displayName,
     speakerRole: userRole,
     enabled: isMicOn,
+    onSegmentFinalized: (seg) => {
+      // Broadcast utterance in real-time to the other attendee over the active room channel
+      try {
+        presenceChannelRef.current?.send({
+          type: "broadcast",
+          event: "meeting_transcript",
+          payload: seg,
+        });
+      } catch (err) {
+        console.warn("Could not broadcast transcript segment:", err);
+      }
+    },
   });
 
   const [isConsolidatingTranscript, setIsConsolidatingTranscript] = React.useState(false);
@@ -245,6 +258,8 @@ export function VideoMeetingRoom({
   displayNameRef.current = displayName;
   const userRoleRef = React.useRef(userRole);
   userRoleRef.current = userRole;
+  const addRemoteSegmentRef = React.useRef(addRemoteSegment);
+  addRemoteSegmentRef.current = addRemoteSegment;
 
   // ── My participant record ──
   const myParticipant: RoomParticipant = React.useMemo(
@@ -443,6 +458,14 @@ export function VideoMeetingRoom({
             if (prev.some((m) => m.id === payload.payload?.id)) return prev;
             return [...prev, payload.payload];
           });
+        }
+      })
+      // Live continuous transcript broadcast between attendees
+      .on("broadcast", { event: "meeting_transcript" }, (payload: any) => {
+        if (!active) return;
+        const seg = payload.payload;
+        if (seg && seg.speaker_name !== displayNameRef.current) {
+          addRemoteSegmentRef.current(seg);
         }
       })
       // ── WebRTC Signaling (Perfect Negotiation) ──
@@ -1142,10 +1165,28 @@ export function VideoMeetingRoom({
                       </div>
                     </div>
 
+                    {!isTranscribing && isSpeechSupported && (
+                      <button
+                        onClick={() => startTranscription()}
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition-all hover:scale-[1.01] active:scale-[0.99]"
+                      >
+                        <Mic className="h-3.5 w-3.5 animate-pulse" />
+                        <span>Start Transcribing My Speech (Mac / Chrome / Safari)</span>
+                      </button>
+                    )}
+
                     {speechError && (
-                      <div className="text-[11px] bg-red-950/50 border border-red-800/50 text-red-300 p-2 rounded-lg flex items-center gap-1.5">
-                        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
-                        <span>{speechError}</span>
+                      <div className="text-[11px] bg-red-950/50 border border-red-800/50 text-red-300 p-2 rounded-lg flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                          <span>{speechError}</span>
+                        </div>
+                        <button
+                          onClick={() => startTranscription()}
+                          className="px-2 py-0.5 bg-red-800/50 hover:bg-red-800 text-red-200 rounded text-[10px] font-bold"
+                        >
+                          Retry
+                        </button>
                       </div>
                     )}
 
